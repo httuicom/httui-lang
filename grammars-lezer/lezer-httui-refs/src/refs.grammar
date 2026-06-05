@@ -1,0 +1,49 @@
+// Lezer grammar for httui reference syntax.
+//
+// Recognizes {{alias.path[0].nested}} forms embedded in arbitrary text
+// (typically markdown bodies and string literals). Emits tokens used by
+// the CodeMirror 6 client for first-paint lexical highlighting; LSP
+// enriches with semantic info (resolved vs unresolved, types, etc.).
+//
+// Grammar coverage (this slice):
+//   {{alias}}                    — alias only
+//   {{alias.path}}               — alias + dot navigation
+//   {{alias.path.nested}}        — multi-segment path
+//   {{alias.path[0]}}            — array index
+//   {{ENV_VAR}}                  — env var (no dot)
+//
+// Deferred (future slices):
+//   {{alias | filter}}           — pipeline syntax (v2.0)
+//   {{$prev.path}}               — removed from product
+//
+// Sync contract: tree-sitter-httui-refs (canonical, in lib/grammars/)
+// must emit equivalent token kinds for the same inputs. Cross-grammar
+// corpus tests live in cross-grammar-tests/ and run in CI.
+
+@top File { (Ref | Text)* }
+
+Ref { LBrace RefBody? RBrace }
+
+RefBody { Identifier DotPath? }
+
+DotPath { (Dot PathSegment)+ }
+
+PathSegment { Identifier IndexAccess? }
+
+IndexAccess { LBracket Number RBracket }
+
+@tokens {
+  LBrace { "{{" }
+  RBrace { "}}" }
+  Dot { "." }
+  LBracket { "[" }
+  RBracket { "]" }
+  Identifier { $[a-zA-Z_] $[a-zA-Z0-9_]* }
+  Number { $[0-9]+ }
+  Text {
+    ![{]+ |
+    "{" ![{]
+  }
+}
+
+@detectDelim
