@@ -22,6 +22,9 @@ jobs:
       - uses: ocaml/setup-ocaml@v3
         with:
           ocaml-compiler: "5.1"
+          dune-cache: true
+      - name: Install dune
+        run: opam install --yes dune
       - name: Install dependencies
         run: opam install . --deps-only --with-test
       - name: Build

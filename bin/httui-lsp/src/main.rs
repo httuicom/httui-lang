@@ -7,6 +7,9 @@
 // request handling on top.
 
 fn main() {
-    eprintln!("httui-lsp v{} — not yet implemented", env!("CARGO_PKG_VERSION"));
+    eprintln!(
+        "httui-lsp v{} — not yet implemented",
+        env!("CARGO_PKG_VERSION")
+    );
     std::process::exit(1);
 }
