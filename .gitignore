@@ -1,0 +1,15 @@
+# OCaml / dune
+_build/
+*.install
+_opam/
+
+# Rust
+target/
+Cargo.lock
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store

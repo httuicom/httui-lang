@@ -1,0 +1,3 @@
+(library
+ (name httui_lang)
+ (public_name httui_lang))
