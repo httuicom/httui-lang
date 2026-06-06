@@ -54,6 +54,7 @@ jobs:
   lezer-refs:
     name: Lezer grammar (refs)
     runs-on: ubuntu-latest
+    if: hashFiles('grammars-lezer/lezer-httui-refs/package.json') != ''
     defaults:
       run:
         working-directory: grammars-lezer/lezer-httui-refs
@@ -74,6 +75,7 @@ jobs:
   tree-sitter-refs:
     name: Tree-sitter grammar (refs)
     runs-on: ubuntu-latest
+    if: hashFiles('lib/grammars/tree-sitter-httui-refs/grammar.js') != ''
     defaults:
       run:
         working-directory: lib/grammars/tree-sitter-httui-refs
@@ -116,5 +118,5 @@ jobs:
               echo "::error::commit $SHA: subject does not match conventional commits"
               FAIL=1
             fi
-          done < <(git log --format='%h %s' ${BASE_SHA}..HEAD)
+          done < <(git log --no-merges --format='%h %s' ${BASE_SHA}..HEAD)
           exit $FAIL
