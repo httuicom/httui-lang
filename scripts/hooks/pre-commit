@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# Lightweight pre-commit checks. Heavier validations (full test suite)
+# run in CI. The goal here is to catch obvious mistakes before they hit
+# the remote.
+
+set -euo pipefail
+
+ROOT="$(git rev-parse --show-toplevel)"
+
+# 1) Make sure node_modules is not staged anywhere
+if git diff --cached --name-only | grep -q '/node_modules/'; then
+  echo "pre-commit hook: refusing to commit files inside node_modules/" >&2
+  echo "Add or update a .gitignore to exclude node_modules and try again." >&2
+  exit 1
+fi
+
+# 2) Make sure dune _build is not staged
+if git diff --cached --name-only | grep -q '/_build/'; then
+  echo "pre-commit hook: refusing to commit files inside _build/" >&2
+  exit 1
+fi
+
+# 3) Make sure no internal planning vocab leaks into staged code or docs
+STAGED=$(git diff --cached --name-only --diff-filter=ACMR | grep -E '\.(ml|mli|rs|ts|tsx|js|md|yml|yaml|toml)$' || true)
+if [[ -n "$STAGED" ]]; then
+  HITS=$(printf '%s\n' "$STAGED" | xargs -I{} git --no-pager diff --cached -U0 -- "$ROOT/{}" 2>/dev/null | \
+    grep -E '^\+' | \
+    grep -v '^\+\+\+' | \
+    grep -Ei '\b(ADR-?[0-9]|RFC-?[0-9]|Slice[ -]?[0-9]|V[0-9]+\b|tui-V[0-9]|Phase[ -]?[0-9]|Fase[ -]?[0-9]|Vertical[ -]?[0-9]|Story[ -]?[0-9])' || true)
+  if [[ -n "$HITS" ]]; then
+    echo "pre-commit hook: staged lines contain internal planning vocabulary." >&2
+    echo "$HITS" >&2
+    echo "" >&2
+    echo "Describe what the change does, not which internal plan it implements." >&2
+    exit 1
+  fi
+fi
+
+exit 0

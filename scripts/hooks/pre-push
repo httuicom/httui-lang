@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+# Pre-push hook: quick sanity checks against the commits about to be pushed.
+# Heavier checks (full build + tests) run in CI.
+
+set -euo pipefail
+
+REMOTE="$1"
+URL="$2"
+
+# Read pushed refs from stdin and collect SHA range
+read_pushed_range() {
+  while read -r local_ref local_sha remote_ref remote_sha; do
+    if [[ "$local_sha" == "0000000000000000000000000000000000000000" ]]; then
+      continue   # deletion
+    fi
+    if [[ "$remote_sha" == "0000000000000000000000000000000000000000" ]]; then
+      # new branch — just check the latest 50 commits to bound work
+      RANGE="--max-count=50 $local_sha"
+    else
+      RANGE="$remote_sha..$local_sha"
+    fi
+    echo "$RANGE"
+  done
+}
+
+RANGES=$(read_pushed_range || true)
+
+if [[ -z "$RANGES" ]]; then
+  exit 0
+fi
+
+# Check each commit subject in the range
+while IFS= read -r range; do
+  [[ -z "$range" ]] && continue
+  while IFS= read -r subject; do
+    if [[ -z "$subject" ]]; then continue; fi
+    if [[ ${#subject} -gt 72 ]]; then
+      echo "pre-push hook: commit subject exceeds 72 characters" >&2
+      echo "  $subject" >&2
+      exit 1
+    fi
+    if printf '%s' "$subject" | grep -Eqi '\b(ADR-?[0-9]|RFC-?[0-9]|Slice[ -]?[0-9]|V[0-9]+\b|tui-V[0-9]|Phase[ -]?[0-9]|Fase[ -]?[0-9]|Vertical[ -]?[0-9]|Story[ -]?[0-9])'; then
+      echo "pre-push hook: commit subject contains internal planning vocabulary" >&2
+      echo "  $subject" >&2
+      exit 1
+    fi
+  done < <(git log --format='%s' $range)
+done <<< "$RANGES"
+
+exit 0
