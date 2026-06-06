@@ -7,6 +7,22 @@ _opam/
 target/
 Cargo.lock
 
+# Node / npm
+node_modules/
+*.tsbuildinfo
+
+# Bundled outputs
+dist/
+
+# Generated parsers (regenerated via build script)
+src/parser.js
+src/parser.terms.js
+
+# Tree-sitter build outputs (generated parsers ARE committed by convention
+# so consumers can use the grammar without the tree-sitter CLI)
+build/
+bindings/
+
 # IDE
 .vscode/
 .idea/

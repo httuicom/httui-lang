@@ -72,6 +72,31 @@ jobs:
       - name: Build bundle
         run: npm run build
 
+  tree-sitter-refs:
+    name: Tree-sitter grammar (refs)
+    runs-on: ubuntu-latest
+    if: hashFiles('lib/grammars/tree-sitter-httui-refs/grammar.js') != ''
+    defaults:
+      run:
+        working-directory: lib/grammars/tree-sitter-httui-refs
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install dependencies
+        run: npm install
+      - name: Generate parser
+        run: npx tree-sitter generate
+      - name: Verify committed artifacts match regeneration
+        run: |
+          if ! git diff --exit-code src/parser.c src/grammar.json src/node-types.json; then
+            echo "::error::Committed tree-sitter artifacts are out of sync with grammar.js. Run 'npx tree-sitter generate' and commit the result."
+            exit 1
+          fi
+      - name: Run corpus tests
+        run: npx tree-sitter test
+
   commit-style:
     name: Commit style (subject only, conventional, no internal vocab)
     runs-on: ubuntu-latest
