@@ -1,0 +1,131 @@
+==============================
+alias only
+==============================
+{{req1}}
+---
+(source_file
+  (ref
+    (ref_body
+      (identifier))))
+
+==============================
+alias with single-segment path
+==============================
+{{req1.body}}
+---
+(source_file
+  (ref
+    (ref_body
+      (identifier)
+      (dot_path
+        (path_segment
+          (identifier))))))
+
+==============================
+alias with multi-segment path
+==============================
+{{req1.body.users.name}}
+---
+(source_file
+  (ref
+    (ref_body
+      (identifier)
+      (dot_path
+        (path_segment
+          (identifier))
+        (path_segment
+          (identifier))
+        (path_segment
+          (identifier))))))
+
+==============================
+array index on first segment
+==============================
+{{req1.body.users[0]}}
+---
+(source_file
+  (ref
+    (ref_body
+      (identifier)
+      (dot_path
+        (path_segment
+          (identifier))
+        (path_segment
+          (identifier)
+          (index_access
+            (number)))))))
+
+==============================
+nested index path
+==============================
+{{req1.body.users[0].id}}
+---
+(source_file
+  (ref
+    (ref_body
+      (identifier)
+      (dot_path
+        (path_segment
+          (identifier))
+        (path_segment
+          (identifier)
+          (index_access
+            (number)))
+        (path_segment
+          (identifier))))))
+
+==============================
+uppercase identifier (env var)
+==============================
+{{API_TOKEN}}
+---
+(source_file
+  (ref
+    (ref_body
+      (identifier))))
+
+==============================
+ref surrounded by text
+==============================
+hello {{req1}} world
+---
+(source_file
+  (text)
+  (ref
+    (ref_body
+      (identifier)))
+  (text))
+
+==============================
+multiple refs in one document
+==============================
+a {{x}} b {{y.z}} c
+---
+(source_file
+  (text)
+  (ref
+    (ref_body
+      (identifier)))
+  (text)
+  (ref
+    (ref_body
+      (identifier)
+      (dot_path
+        (path_segment
+          (identifier)))))
+  (text))
+
+==============================
+single brace is text
+==============================
+a { b } c
+---
+(source_file
+  (text))
+
+==============================
+empty document
+==============================
+
+---
+(source_file)
