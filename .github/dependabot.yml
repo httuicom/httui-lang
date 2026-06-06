@@ -1,0 +1,43 @@
+version: 2
+
+updates:
+  # npm packages for the Lezer grammar
+  - package-ecosystem: npm
+    directory: /grammars-lezer/lezer-httui-refs
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      lezer-minor-patch:
+        update-types: [minor, patch]
+
+  # npm packages for the tree-sitter grammar
+  - package-ecosystem: npm
+    directory: /lib/grammars/tree-sitter-httui-refs
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      tree-sitter-minor-patch:
+        update-types: [minor, patch]
+
+  # Cargo deps for the LSP binary
+  - package-ecosystem: cargo
+    directory: /bin/httui-lsp
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      cargo-minor-patch:
+        update-types: [minor, patch]
+
+  # GitHub Actions used by CI
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 3

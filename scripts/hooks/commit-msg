@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+# Enforces commit message rules:
+#   - Subject only, no body
+#   - Conventional commits subject (type or type(scope): description)
+#   - Subject <= 72 characters
+#   - No internal planning vocabulary (ADR-N, Slice N, V1, Phase N, etc.)
+#   - No AI-attribution markers
+#
+# Aligned with the public vocabulary discipline documented in
+# CONTRIBUTING.md and the project commit style.
+
+set -euo pipefail
+
+MSG_FILE="$1"
+MSG_RAW="$(cat "$MSG_FILE")"
+
+# Strip comment lines (those starting with #) and trailing blank lines
+MSG_BODY="$(printf '%s\n' "$MSG_RAW" | sed '/^#/d')"
+# Remove trailing blank lines
+MSG_BODY="$(printf '%s\n' "$MSG_BODY" | sed -e ':a' -e '/^[[:space:]]*$/{$d;N;ba' -e '}')"
+
+SUBJECT="$(printf '%s\n' "$MSG_BODY" | head -n 1)"
+BODY="$(printf '%s\n' "$MSG_BODY" | sed -e '1d')"
+
+fail() {
+  echo "" >&2
+  echo "commit-msg hook: $1" >&2
+  echo "" >&2
+  echo "Offending subject:" >&2
+  echo "  $SUBJECT" >&2
+  echo "" >&2
+  echo "Style rules:" >&2
+  echo "  - subject only, no body" >&2
+  echo "  - conventional commits: type(scope): description" >&2
+  echo "  - subject <= 72 characters" >&2
+  echo "  - no internal planning vocabulary in subject" >&2
+  echo "  - no AI co-author tags or emoji markers" >&2
+  echo "" >&2
+  exit 1
+}
+
+# Rule: no body
+if [[ -n "$(printf '%s' "$BODY" | tr -d '[:space:]')" ]]; then
+  fail "subject-only commits required — remove the body"
+fi
+
+# Rule: conventional commits subject
+if ! printf '%s' "$SUBJECT" | grep -Eq '^(feat|fix|chore|docs|refactor|test|build|ci|perf|style|revert)(\([a-z0-9_,-]+\))?(!)?: .+'; then
+  fail "subject does not match conventional commits format"
+fi
+
+# Rule: subject length
+if [[ ${#SUBJECT} -gt 72 ]]; then
+  fail "subject exceeds 72 characters (${#SUBJECT})"
+fi
+
+# Rule: no internal planning vocabulary
+if printf '%s' "$SUBJECT" | grep -Eqi '\b(ADR-?[0-9]|RFC-?[0-9]|Slice[ -]?[0-9]|V[0-9]|tui-V[0-9]|Phase[ -]?[0-9]|Fase[ -]?[0-9]|Vertical|Story[ -]?[0-9]|Cen[a-z]rio-?[0-9]|C[0-9][ab]?)\b'; then
+  fail "subject contains internal planning vocabulary — describe what the change does instead"
+fi
+
+# Rule: no AI attribution
+if printf '%s' "$SUBJECT" | grep -Eqi 'generated with|co-authored-by:.*claude|co-authored-by:.*assistant'; then
+  fail "subject contains AI attribution markers"
+fi
+
+exit 0

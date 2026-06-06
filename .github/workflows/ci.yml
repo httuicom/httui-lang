@@ -50,3 +50,73 @@ jobs:
       - name: Clippy
         working-directory: bin/httui-lsp
         run: cargo clippy --all-targets -- -D warnings
+
+  lezer-refs:
+    name: Lezer grammar (refs)
+    runs-on: ubuntu-latest
+    if: hashFiles('grammars-lezer/lezer-httui-refs/package.json') != ''
+    defaults:
+      run:
+        working-directory: grammars-lezer/lezer-httui-refs
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: grammars-lezer/lezer-httui-refs/package-lock.json
+      - name: Install dependencies
+        run: npm ci
+      - name: Test (also generates parser)
+        run: npm test
+      - name: Build bundle
+        run: npm run build
+
+  tree-sitter-refs:
+    name: Tree-sitter grammar (refs)
+    runs-on: ubuntu-latest
+    if: hashFiles('lib/grammars/tree-sitter-httui-refs/grammar.js') != ''
+    defaults:
+      run:
+        working-directory: lib/grammars/tree-sitter-httui-refs
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install dependencies
+        run: npm install
+      - name: Generate parser
+        run: npx tree-sitter generate
+      - name: Run corpus tests
+        run: npx tree-sitter test
+
+  commit-style:
+    name: Commit style (subject only, conventional, no internal vocab)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Validate commits on PR branch
+        run: |
+          BASE_SHA=$(git merge-base origin/${{ github.base_ref }} HEAD)
+          FAIL=0
+          while read -r line; do
+            SHA=$(echo "$line" | awk '{print $1}')
+            SUBJ=$(echo "$line" | cut -d' ' -f2-)
+            if [[ ${#SUBJ} -gt 72 ]]; then
+              echo "::error::commit $SHA: subject exceeds 72 characters"
+              FAIL=1
+            fi
+            if echo "$SUBJ" | grep -Eqi '\b(ADR-?[0-9]|RFC-?[0-9]|Slice[ -]?[0-9]|V[0-9]+\b|tui-V[0-9]|Phase[ -]?[0-9]|Fase[ -]?[0-9]|Vertical[ -]?[0-9]|Story[ -]?[0-9])'; then
+              echo "::error::commit $SHA: subject contains internal planning vocabulary"
+              FAIL=1
+            fi
+            if ! echo "$SUBJ" | grep -Eq '^(feat|fix|chore|docs|refactor|test|build|ci|perf|style|revert)(\([a-z0-9_,-]+\))?(!)?: .+'; then
+              echo "::error::commit $SHA: subject does not match conventional commits"
+              FAIL=1
+            fi
+          done < <(git log --no-merges --format='%h %s' ${BASE_SHA}..HEAD)
+          exit $FAIL
