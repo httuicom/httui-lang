@@ -20,14 +20,14 @@ let read_message () =
     if line = "" then ()
     else begin
       (match String.index_opt line ':' with
-       | Some i ->
-         let key = String.lowercase_ascii (String.sub line 0 i) in
-         if key = "content-length" then
-           len :=
-             int_of_string
-               (String.trim
-                  (String.sub line (i + 1) (String.length line - i - 1)))
-       | None -> ());
+      | Some i ->
+          let key = String.lowercase_ascii (String.sub line 0 i) in
+          if key = "content-length" then
+            len :=
+              int_of_string
+                (String.trim
+                   (String.sub line (i + 1) (String.length line - i - 1)))
+      | None -> ());
       read_headers ()
     end
   in
@@ -46,22 +46,21 @@ let respond id json =
 let respond_error id code message =
   write_packet
     (Jsonrpc.Packet.Response
-       (Jsonrpc.Response.error id (Jsonrpc.Response.Error.make ~code ~message ())))
+       (Jsonrpc.Response.error id
+          (Jsonrpc.Response.Error.make ~code ~message ())))
 
 (* --- handlers ----------------------------------------------------------- *)
 
 let params_json (params : Jsonrpc.Structured.t option) =
-  match params with
-  | Some p -> Jsonrpc.Structured.yojson_of_t p
-  | None -> `Null
+  match params with Some p -> Jsonrpc.Structured.yojson_of_t p | None -> `Null
 
 let on_initialize (r : Jsonrpc.Request.t) =
   let capabilities =
     Lsp.Types.ServerCapabilities.create
       ~textDocumentSync:
         (`TextDocumentSyncOptions
-          (Lsp.Types.TextDocumentSyncOptions.create ~openClose:true
-             ~change:Lsp.Types.TextDocumentSyncKind.Full ()))
+           (Lsp.Types.TextDocumentSyncOptions.create ~openClose:true
+              ~change:Lsp.Types.TextDocumentSyncKind.Full ()))
       ()
   in
   let serverInfo =
@@ -77,36 +76,36 @@ let handle_request (r : Jsonrpc.Request.t) =
   match r.method_ with
   | "initialize" -> on_initialize r
   | "shutdown" ->
-    shutdown_received := true;
-    respond r.id `Null
+      shutdown_received := true;
+      respond r.id `Null
   | m -> respond_error r.id Jsonrpc.Response.Error.Code.MethodNotFound m
 
 let handle_notification (n : Jsonrpc.Notification.t) =
   match n.method_ with
   | "initialized" -> ()
   | "textDocument/didOpen" ->
-    let p =
-      Lsp.Types.DidOpenTextDocumentParams.t_of_yojson (params_json n.params)
-    in
-    Hashtbl.replace docs
-      (Lsp.Types.DocumentUri.to_string p.textDocument.uri)
-      p.textDocument.text
-  | "textDocument/didChange" ->
-    let p =
-      Lsp.Types.DidChangeTextDocumentParams.t_of_yojson (params_json n.params)
-    in
-    (* Full sync: the last change event carries the whole document. *)
-    (match List.rev p.contentChanges with
-     | last :: _ ->
-       Hashtbl.replace docs
-         (Lsp.Types.DocumentUri.to_string p.textDocument.uri)
-         last.text
-     | [] -> ())
+      let p =
+        Lsp.Types.DidOpenTextDocumentParams.t_of_yojson (params_json n.params)
+      in
+      Hashtbl.replace docs
+        (Lsp.Types.DocumentUri.to_string p.textDocument.uri)
+        p.textDocument.text
+  | "textDocument/didChange" -> (
+      let p =
+        Lsp.Types.DidChangeTextDocumentParams.t_of_yojson (params_json n.params)
+      in
+      (* Full sync: the last change event carries the whole document. *)
+      match List.rev p.contentChanges with
+      | last :: _ ->
+          Hashtbl.replace docs
+            (Lsp.Types.DocumentUri.to_string p.textDocument.uri)
+            last.text
+      | [] -> ())
   | "textDocument/didClose" ->
-    let p =
-      Lsp.Types.DidCloseTextDocumentParams.t_of_yojson (params_json n.params)
-    in
-    Hashtbl.remove docs (Lsp.Types.DocumentUri.to_string p.textDocument.uri)
+      let p =
+        Lsp.Types.DidCloseTextDocumentParams.t_of_yojson (params_json n.params)
+      in
+      Hashtbl.remove docs (Lsp.Types.DocumentUri.to_string p.textDocument.uri)
   | "exit" -> exit (if !shutdown_received then 0 else 1)
   | _ -> ()
 
