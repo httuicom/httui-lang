@@ -97,6 +97,28 @@ jobs:
       - name: Run corpus tests
         run: npx tree-sitter test
 
+  cross-grammar:
+    name: Cross-grammar sync (refs)
+    runs-on: ubuntu-latest
+    if: hashFiles('cross-grammar-tests/package.json') != ''
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install tree-sitter CLI
+        run: npm install -g tree-sitter-cli
+      - name: Build Lezer grammar package
+        working-directory: grammars-lezer/lezer-httui-refs
+        run: |
+          npm ci
+          npm run build
+      - name: Run sync tests
+        working-directory: cross-grammar-tests
+        run: |
+          npm ci
+          npx vitest run
+
   commit-style:
     name: Commit style (subject only, conventional, no internal vocab)
     runs-on: ubuntu-latest
