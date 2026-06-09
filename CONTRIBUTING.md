@@ -9,7 +9,6 @@ Lezer grammars, the OCaml semantic library, and the LSP server binary.
 ### Prerequisites
 
 - **OCaml 5.1+** and **dune** (install via opam)
-- **Rust stable** (install via rustup)
 - **Node.js 22+** (for grammar tooling: lezer-generator, tree-sitter CLI)
 - **tree-sitter CLI** (`brew install tree-sitter` or via npm)
 
@@ -25,9 +24,9 @@ make setup-hooks    # installs commit-msg, pre-push, pre-commit hooks
 ### Build and test
 
 ```bash
-make build          # OCaml lib + grammars + Rust binary
+make build          # OCaml lib + LSP binary + grammars
 make test           # all tests across all languages
-make lint           # formatters, linters, clippy
+make lint           # formatters and linters
 ```
 
 ## Commit style

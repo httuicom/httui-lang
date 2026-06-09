@@ -1,15 +1,15 @@
 # Top-level Makefile orchestrating common tasks across the OCaml library,
-# Rust LSP binary, and grammars (tree-sitter + Lezer). Intended as the
-# canonical entrypoint for contributors and CI.
+# the OCaml LSP binary, and grammars (tree-sitter + Lezer). Intended as
+# the canonical entrypoint for contributors and CI.
 
 LEZER_REFS_DIR := grammars-lezer/lezer-httui-refs
 TS_REFS_DIR    := lib/grammars/tree-sitter-httui-refs
 LSP_DIR        := bin/httui-lsp
 
 .PHONY: help install setup-hooks build build-ocaml build-grammars build-lsp \
-        test test-ocaml test-grammars test-lsp \
-        lint lint-ocaml lint-rust lint-js \
-        clean clean-ocaml clean-grammars clean-lsp \
+        test test-ocaml test-grammars \
+        lint lint-ocaml lint-js \
+        clean clean-ocaml clean-grammars \
         regenerate-grammars audit
 
 help: ## Show this help
@@ -17,45 +17,37 @@ help: ## Show this help
 
 install: ## Install all dependencies
 	opam install --yes --deps-only --with-test .
-	cd $(LSP_DIR) && cargo fetch
 	cd $(LEZER_REFS_DIR) && npm install
 	cd $(TS_REFS_DIR) && npm install
 
 setup-hooks: ## Install git hooks (commit-msg, pre-push, pre-commit)
 	bash scripts/setup-hooks.sh
 
-build: build-ocaml build-grammars build-lsp ## Build everything
+build: build-ocaml build-grammars ## Build everything
 
-build-ocaml: ## Build OCaml library
+build-ocaml: ## Build OCaml library + LSP binary
 	opam exec -- dune build
 
 build-grammars: ## Build all grammars
 	cd $(LEZER_REFS_DIR) && npm run build
 	cd $(TS_REFS_DIR) && npx tree-sitter generate
 
-build-lsp: ## Build LSP server binary
-	cd $(LSP_DIR) && cargo build --all-targets
+build-lsp: ## Build only the LSP server binary
+	opam exec -- dune build $(LSP_DIR)/httui_lsp.exe
 
-test: test-ocaml test-grammars test-lsp ## Run all tests
+test: test-ocaml test-grammars ## Run all tests
 
-test-ocaml: ## Run OCaml tests
+test-ocaml: ## Run OCaml tests (library + LSP binary)
 	opam exec -- dune runtest
 
 test-grammars: ## Run grammar corpus tests
 	cd $(LEZER_REFS_DIR) && npm test
 	cd $(TS_REFS_DIR) && npx tree-sitter test
 
-test-lsp: ## Run Rust tests for LSP binary
-	cd $(LSP_DIR) && cargo test --all-targets
-
-lint: lint-ocaml lint-rust lint-js ## Run all linters
+lint: lint-ocaml lint-js ## Run all linters
 
 lint-ocaml: ## OCaml formatter check
 	opam exec -- dune build @fmt
-
-lint-rust: ## Rust fmt + clippy
-	cd $(LSP_DIR) && cargo fmt --all -- --check
-	cd $(LSP_DIR) && cargo clippy --all-targets -- -D warnings
 
 lint-js: ## JS/TS lint via eslint + prettier
 	cd $(LEZER_REFS_DIR) && npx eslint --max-warnings 0 src test
@@ -68,9 +60,8 @@ regenerate-grammars: ## Regenerate parser artifacts from grammar definitions
 audit: ## Run security audits across ecosystems
 	cd $(LEZER_REFS_DIR) && npm audit --audit-level=moderate
 	cd $(TS_REFS_DIR) && npm audit --audit-level=moderate
-	cd $(LSP_DIR) && cargo audit || true   # cargo-audit may not be installed everywhere
 
-clean: clean-ocaml clean-grammars clean-lsp ## Remove all build artifacts
+clean: clean-ocaml clean-grammars ## Remove all build artifacts
 
 clean-ocaml: ## Clean OCaml build outputs
 	opam exec -- dune clean
@@ -78,6 +69,3 @@ clean-ocaml: ## Clean OCaml build outputs
 clean-grammars: ## Clean grammar build outputs
 	rm -rf $(LEZER_REFS_DIR)/dist $(LEZER_REFS_DIR)/src/parser.js $(LEZER_REFS_DIR)/src/parser.terms.js
 	rm -rf $(TS_REFS_DIR)/build
-
-clean-lsp: ## Clean Rust build outputs
-	cd $(LSP_DIR) && cargo clean

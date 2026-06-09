@@ -15,8 +15,9 @@ grammars-lezer/         Lezer grammars for CodeMirror 6 first-paint rendering
                         (paired with tree-sitter for httui-owned languages)
 grammars-external/      Upstream tree-sitter grammars vendored as submodules
                         (postgres, mysql, sqlite — arriving in later work)
-bin/httui-lsp/          Rust binary that wraps the OCaml library via FFI
-                        and depends on httui-core for storage and execution
+bin/httui-lsp/          LSP server binary (pure OCaml) — an IO shell
+                        around the library; storage reads only, never
+                        touches the OS keychain
 spec/                   Canonical specifications (token kinds vocabulary,
                         protocol notes)
 bench/                  Benchmark fixtures and harness
@@ -25,8 +26,7 @@ OWNERS.md               Per-grammar ownership declarations
 
 ## Quick start
 
-Prerequisites: OCaml 5.1+, Rust stable, Node 22+, tree-sitter CLI, opam,
-dune.
+Prerequisites: OCaml 5.1+, Node 22+, tree-sitter CLI, opam, dune.
 
 ```bash
 git clone git@github.com:httuicom/httui-lang.git
@@ -46,13 +46,12 @@ Every PR runs the following checks in CI before it can be merged:
 
 | Check | Scope |
 |---|---|
-| OCaml build + tests | Ubuntu and macOS |
-| Rust build, fmt, clippy | `bin/httui-lsp` |
+| OCaml build + tests (library + LSP binary) | Ubuntu and macOS |
 | Lezer grammar build + corpus tests | `grammars-lezer/lezer-httui-refs` |
 | Tree-sitter grammar generate + corpus tests | `lib/grammars/tree-sitter-httui-refs` |
 | Tree-sitter sanitizers (ASan + UBSan) | scanner.c when present |
 | Cross-grammar sync test | shared corpus for httui-owned grammars |
-| Dependency audit | npm + cargo |
+| Dependency audit | npm |
 
 PRs that touch grammars also require the audit checklist from the PR
 template to be completed.
