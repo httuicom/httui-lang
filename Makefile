@@ -7,7 +7,7 @@ TS_REFS_DIR    := lib/grammars/tree-sitter-httui-refs
 LSP_DIR        := bin/httui-lsp
 
 .PHONY: help install setup-hooks build build-ocaml build-grammars build-lsp \
-        test test-ocaml test-grammars \
+        test test-ocaml test-grammars bench \
         lint lint-ocaml lint-js \
         clean clean-ocaml clean-grammars \
         regenerate-grammars audit
@@ -43,6 +43,9 @@ test-ocaml: ## Run OCaml tests (library + LSP binary)
 test-grammars: ## Run grammar corpus tests
 	cd $(LEZER_REFS_DIR) && npm test
 	cd $(TS_REFS_DIR) && npx tree-sitter test
+
+bench: build-ocaml ## Run the LSP transport benchmark
+	python3 bench/lsp_roundtrip.py
 
 lint: lint-ocaml lint-js ## Run all linters
 
