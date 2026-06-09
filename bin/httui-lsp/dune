@@ -1,0 +1,5 @@
+(executable
+ (name httui_lsp)
+ (public_name httui-lsp)
+ (package httui_lang)
+ (libraries httui_lang lsp jsonrpc yojson))

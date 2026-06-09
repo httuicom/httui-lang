@@ -14,4 +14,17 @@ Cold-start metrics tracked separately: LSP spawn-to-ready, time-to-first-
 completion after `didOpen`, first parse + semantic tokens, and schema cache
 lookup. Memory budget (RSS) tracked on both medium and large fixtures.
 
-Bench harness implementation pending.
+## Harness
+
+- `lsp_roundtrip.py` — transport baseline against the built `httui-lsp`
+  binary: spawn-to-initialize, request round-trip (framing + JSON +
+  dispatch), and didChange ingestion. No external dependencies.
+
+```bash
+dune build
+make bench          # or: python3 bench/lsp_roundtrip.py
+```
+
+Feature-level operations (hover, completion, semantic tokens,
+diagnostics) gain sections here as the server implements them; the
+fixtures above become their inputs.

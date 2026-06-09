@@ -6,9 +6,6 @@ on:
   pull_request:
     branches: [main]
 
-env:
-  CARGO_TERM_COLOR: always
-
 jobs:
   ocaml:
     name: OCaml build (${{ matrix.os }})
@@ -21,7 +18,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: ocaml/setup-ocaml@v3
         with:
-          ocaml-compiler: "5.1"
+          ocaml-compiler: "5.4"
           dune-cache: true
       - name: Install dune
         run: opam install --yes dune
@@ -31,30 +28,15 @@ jobs:
         run: opam exec -- dune build
       - name: Test
         run: opam exec -- dune runtest
-
-  rust:
-    name: Rust build (httui-lsp)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@v2
-      - name: Build
-        working-directory: bin/httui-lsp
-        run: cargo build --all-targets
-      - name: Check formatting
-        working-directory: bin/httui-lsp
-        run: cargo fmt --all -- --check
-      - name: Clippy
-        working-directory: bin/httui-lsp
-        run: cargo clippy --all-targets -- -D warnings
+      - name: Format check
+        if: runner.os == 'Linux'
+        run: |
+          opam install --yes ocamlformat.0.28.1
+          opam exec -- dune build @fmt
 
   lezer-refs:
     name: Lezer grammar (refs)
     runs-on: ubuntu-latest
-    if: hashFiles('grammars-lezer/lezer-httui-refs/package.json') != ''
     defaults:
       run:
         working-directory: grammars-lezer/lezer-httui-refs
@@ -75,7 +57,6 @@ jobs:
   tree-sitter-refs:
     name: Tree-sitter grammar (refs)
     runs-on: ubuntu-latest
-    if: hashFiles('lib/grammars/tree-sitter-httui-refs/grammar.js') != ''
     defaults:
       run:
         working-directory: lib/grammars/tree-sitter-httui-refs

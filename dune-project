@@ -16,4 +16,7 @@
  (description "Tree-sitter and Lezer grammars, semantic analysis, type inference, and LSP support for httui executable blocks and references.")
  (depends
   (ocaml (>= 5.1.0))
-  dune))
+  dune
+  lsp
+  jsonrpc
+  yojson))

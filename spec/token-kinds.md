@@ -6,8 +6,15 @@ kinds to these names; clients (CM6, ratatui, external editors via LSP
 semantic tokens) consume only these names.
 
 The LSP server declares them in `SemanticTokensLegend` at `initialize`.
-Clients without explicit theme rules for an `httui.*` kind fall back on the
-LSP-standard kind shown in the second column.
+Fallback is a **server-side downgrade**: token types are unique per range
+and clients silently ignore types outside their announced capabilities, so
+the server compares the `httui.*` kinds with the client's capabilities at
+`initialize` and, for clients without support, emits the LSP-standard
+fallback kind (second column) in both the legend and the token stream.
+In VS Code, the extension registers the custom types via the
+`semanticTokenTypes` contribution with `superType` pointing at the
+fallback — VS Code's native degradation mechanism, aligned with this
+table.
 
 ## Standard kinds (LSP 3.17 SemanticTokenTypes)
 
@@ -81,6 +88,11 @@ A PR that adds a new `httui.*` kind without a fallback is rejected.
    to this spec; grammars don't ship kinds outside this list.
 5. **Fallback mandatory for every `httui.*`.** Without it, an external
    editor with no extension renders the token uncolored.
+6. **`secret` implies value masking.** No surface (hover, `inlineValue`,
+   completion detail, server logs) shows the real value of a secret env
+   var — only a masked form. The modifier governs token rendering; the
+   masking is a server invariant (the server has no keychain access by
+   design).
 
 ## Theming integration
 
@@ -120,4 +132,7 @@ let legend = {
 ```
 
 Clients announce which subsets they support via `ClientCapabilities`.
-Server respects client capabilities; unknown kinds are dropped silently.
+The legend above is the **full** vocab; the legend actually registered is
+computed per client — `httui.*` kinds the client did not announce are
+replaced by their fallback before registration, so no token ever reaches
+a client as an unknown (silently dropped) kind.
