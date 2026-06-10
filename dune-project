@@ -17,6 +17,7 @@
  (depends
   (ocaml (>= 5.1.0))
   dune
+  (tree-sitter (>= 0.1.0))
   lsp
   jsonrpc
   yojson))
