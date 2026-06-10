@@ -1,0 +1,4 @@
+(tests
+ (names test_httui_lang test_lsp)
+ (libraries httui_lang unix yojson)
+ (deps %{exe:../bin/httui-lsp/httui_lsp.exe}))

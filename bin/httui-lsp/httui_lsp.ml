@@ -5,6 +5,8 @@
    read-only by design; the server never touches the OS keychain — secret
    values exist only on the execution path, outside this process. *)
 
+module T = Lsp.Types
+
 let docs : (string, string) Hashtbl.t = Hashtbl.create 16
 
 (* --- stdio framing ----------------------------------------------------- *)
@@ -49,6 +51,49 @@ let respond_error id code message =
        (Jsonrpc.Response.error id
           (Jsonrpc.Response.Error.make ~code ~message ())))
 
+let notify method_ json =
+  write_packet
+    (Jsonrpc.Packet.Notification
+       (Jsonrpc.Notification.create ~method_
+          ~params:(Jsonrpc.Structured.t_of_yojson json)
+          ()))
+
+(* --- analysis glue ------------------------------------------------------ *)
+
+let position_of_offset text off =
+  let p = Httui_lang.Doc_position.of_offset text off in
+  T.Position.create ~line:p.line ~character:p.character
+
+let range_of_offsets text ~start ~stop =
+  T.Range.create
+    ~start:(position_of_offset text start)
+    ~end_:(position_of_offset text stop)
+
+let offset_of_position text (pos : T.Position.t) =
+  Httui_lang.Doc_position.to_offset text
+    { line = pos.line; character = pos.character }
+
+let publish_diagnostics uri text =
+  let blocks = Httui_lang.Fence_scanner.scan text in
+  let diagnostics =
+    Httui_lang.Analyze.diagnostics blocks
+    |> List.map (fun (d : Httui_lang.Analyze.diagnostic) ->
+        T.Diagnostic.create
+          ~range:(range_of_offsets text ~start:d.start_ ~stop:d.stop_)
+          ~severity:
+            (match d.severity with
+            | Httui_lang.Analyze.Error -> T.DiagnosticSeverity.Error
+            | Httui_lang.Analyze.Warning -> T.DiagnosticSeverity.Warning)
+          ~source:"httui" ~message:(`String d.message) ())
+  in
+  let params = T.PublishDiagnosticsParams.create ~uri ~diagnostics () in
+  notify "textDocument/publishDiagnostics"
+    (T.PublishDiagnosticsParams.yojson_of_t params)
+
+let doc_updated uri text =
+  Hashtbl.replace docs (T.DocumentUri.to_string uri) text;
+  publish_diagnostics uri text
+
 (* --- handlers ----------------------------------------------------------- *)
 
 let params_json (params : Jsonrpc.Structured.t option) =
@@ -56,25 +101,67 @@ let params_json (params : Jsonrpc.Structured.t option) =
 
 let on_initialize (r : Jsonrpc.Request.t) =
   let capabilities =
-    Lsp.Types.ServerCapabilities.create
+    T.ServerCapabilities.create
       ~textDocumentSync:
         (`TextDocumentSyncOptions
-           (Lsp.Types.TextDocumentSyncOptions.create ~openClose:true
-              ~change:Lsp.Types.TextDocumentSyncKind.Full ()))
+           (T.TextDocumentSyncOptions.create ~openClose:true
+              ~change:T.TextDocumentSyncKind.Full ()))
+      ~hoverProvider:(`Bool true)
+      ~completionProvider:
+        (T.CompletionOptions.create ~triggerCharacters:[ "{" ] ())
       ()
   in
   let serverInfo =
-    Lsp.Types.InitializeResult.create_serverInfo ~name:"httui-lsp"
-      ~version:Httui_lang.version ()
+    T.InitializeResult.create_serverInfo ~name:"httui-lsp"
+      ~version:Httui_lang.Version.v ()
   in
-  let result = Lsp.Types.InitializeResult.create ~capabilities ~serverInfo () in
-  respond r.id (Lsp.Types.InitializeResult.yojson_of_t result)
+  let result = T.InitializeResult.create ~capabilities ~serverInfo () in
+  respond r.id (T.InitializeResult.yojson_of_t result)
+
+let with_doc id uri k =
+  match Hashtbl.find_opt docs (T.DocumentUri.to_string uri) with
+  | None -> respond id `Null
+  | Some text -> k text
+
+let on_hover (r : Jsonrpc.Request.t) =
+  let p = T.HoverParams.t_of_yojson (params_json r.params) in
+  with_doc r.id p.textDocument.uri (fun text ->
+      let blocks = Httui_lang.Fence_scanner.scan text in
+      let offset = offset_of_position text p.position in
+      match Httui_lang.Analyze.hover_at blocks ~offset with
+      | None -> respond r.id `Null
+      | Some h ->
+          let hover =
+            T.Hover.create
+              ~contents:
+                (`MarkupContent
+                   (T.MarkupContent.create ~kind:T.MarkupKind.Markdown
+                      ~value:h.markdown))
+              ~range:(range_of_offsets text ~start:h.h_start ~stop:h.h_stop)
+              ()
+          in
+          respond r.id (T.Hover.yojson_of_t hover))
+
+let on_completion (r : Jsonrpc.Request.t) =
+  let p = T.CompletionParams.t_of_yojson (params_json r.params) in
+  with_doc r.id p.textDocument.uri (fun text ->
+      let blocks = Httui_lang.Fence_scanner.scan text in
+      let offset = offset_of_position text p.position in
+      let items =
+        Httui_lang.Analyze.completion_at text blocks ~offset
+        |> List.map (fun label ->
+            T.CompletionItem.create ~label ~kind:T.CompletionItemKind.Variable
+              ~detail:"block alias" ())
+      in
+      respond r.id (`List (List.map T.CompletionItem.yojson_of_t items)))
 
 let shutdown_received = ref false
 
 let handle_request (r : Jsonrpc.Request.t) =
   match r.method_ with
   | "initialize" -> on_initialize r
+  | "textDocument/hover" -> on_hover r
+  | "textDocument/completion" -> on_completion r
   | "shutdown" ->
       shutdown_received := true;
       respond r.id `Null
@@ -84,28 +171,19 @@ let handle_notification (n : Jsonrpc.Notification.t) =
   match n.method_ with
   | "initialized" -> ()
   | "textDocument/didOpen" ->
-      let p =
-        Lsp.Types.DidOpenTextDocumentParams.t_of_yojson (params_json n.params)
-      in
-      Hashtbl.replace docs
-        (Lsp.Types.DocumentUri.to_string p.textDocument.uri)
-        p.textDocument.text
+      let p = T.DidOpenTextDocumentParams.t_of_yojson (params_json n.params) in
+      doc_updated p.textDocument.uri p.textDocument.text
   | "textDocument/didChange" -> (
       let p =
-        Lsp.Types.DidChangeTextDocumentParams.t_of_yojson (params_json n.params)
+        T.DidChangeTextDocumentParams.t_of_yojson (params_json n.params)
       in
       (* Full sync: the last change event carries the whole document. *)
       match List.rev p.contentChanges with
-      | last :: _ ->
-          Hashtbl.replace docs
-            (Lsp.Types.DocumentUri.to_string p.textDocument.uri)
-            last.text
+      | last :: _ -> doc_updated p.textDocument.uri last.text
       | [] -> ())
   | "textDocument/didClose" ->
-      let p =
-        Lsp.Types.DidCloseTextDocumentParams.t_of_yojson (params_json n.params)
-      in
-      Hashtbl.remove docs (Lsp.Types.DocumentUri.to_string p.textDocument.uri)
+      let p = T.DidCloseTextDocumentParams.t_of_yojson (params_json n.params) in
+      Hashtbl.remove docs (T.DocumentUri.to_string p.textDocument.uri)
   | "exit" -> exit (if !shutdown_received then 0 else 1)
   | _ -> ()
 
