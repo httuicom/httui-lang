@@ -7,7 +7,7 @@
 
 module T = Lsp.Types
 
-let docs : (string, string) Hashtbl.t = Hashtbl.create 16
+let docs : (string, T.DocumentUri.t * string) Hashtbl.t = Hashtbl.create 16
 
 (* --- stdio framing ----------------------------------------------------- *)
 
@@ -73,10 +73,15 @@ let offset_of_position text (pos : T.Position.t) =
   Httui_lang.Doc_position.to_offset text
     { line = pos.line; character = pos.character }
 
+(* shapes are read per request/publish: they change whenever the user
+   runs a block, and the read is microseconds against a local sqlite *)
+let shapes_for_uri uri =
+  Schema_store.shapes_for ~file_path:(T.DocumentUri.to_path uri)
+
 let publish_diagnostics uri text =
   let blocks = Httui_lang.Fence_scanner.scan text in
   let diagnostics =
-    Httui_lang.Analyze.diagnostics blocks
+    Httui_lang.Analyze.diagnostics ~shapes:(shapes_for_uri uri) blocks
     |> List.map (fun (d : Httui_lang.Analyze.diagnostic) ->
         T.Diagnostic.create
           ~range:(range_of_offsets text ~start:d.start_ ~stop:d.stop_)
@@ -91,7 +96,7 @@ let publish_diagnostics uri text =
     (T.PublishDiagnosticsParams.yojson_of_t params)
 
 let doc_updated uri text =
-  Hashtbl.replace docs (T.DocumentUri.to_string uri) text;
+  Hashtbl.replace docs (T.DocumentUri.to_string uri) (uri, text);
   publish_diagnostics uri text
 
 (* --- handlers ----------------------------------------------------------- *)
@@ -194,7 +199,7 @@ let on_initialize (r : Jsonrpc.Request.t) =
 let with_doc id uri k =
   match Hashtbl.find_opt docs (T.DocumentUri.to_string uri) with
   | None -> respond id `Null
-  | Some text -> k text
+  | Some (_, text) -> k text
 
 let on_hover (r : Jsonrpc.Request.t) =
   let p = T.HoverParams.t_of_yojson (params_json r.params) in
@@ -202,7 +207,9 @@ let on_hover (r : Jsonrpc.Request.t) =
       let blocks = Httui_lang.Fence_scanner.scan text in
       let offset = offset_of_position text p.position in
       match
-        Httui_lang.Analyze.hover_at ~env_keys:(Env_store.keys ()) blocks ~offset
+        Httui_lang.Analyze.hover_at ~env_keys:(Env_store.keys ())
+          ~shapes:(shapes_for_uri p.textDocument.uri)
+          blocks ~offset
       with
       | None -> respond r.id `Null
       | Some h ->
@@ -223,19 +230,25 @@ let on_completion (r : Jsonrpc.Request.t) =
       let blocks = Httui_lang.Fence_scanner.scan text in
       let offset = offset_of_position text p.position in
       let items =
-        Httui_lang.Analyze.completion_at ~env_keys:(Env_store.keys ()) text
-          blocks ~offset
+        Httui_lang.Analyze.completion_at ~env_keys:(Env_store.keys ())
+          ~shapes:(shapes_for_uri p.textDocument.uri)
+          text blocks ~offset
         |> List.map (fun (it : Httui_lang.Analyze.completion_item) ->
-            if it.is_env then
-              T.CompletionItem.create ~label:it.label
-                ~kind:T.CompletionItemKind.Constant
-                ~detail:
-                  (if it.secret then "environment variable (secret)"
-                   else "environment variable")
-                ()
-            else
-              T.CompletionItem.create ~label:it.label
-                ~kind:T.CompletionItemKind.Variable ~detail:"block alias" ())
+            match it.field_type with
+            | Some type_ ->
+                T.CompletionItem.create ~label:it.label
+                  ~kind:T.CompletionItemKind.Field ~detail:type_ ()
+            | None ->
+                if it.is_env then
+                  T.CompletionItem.create ~label:it.label
+                    ~kind:T.CompletionItemKind.Constant
+                    ~detail:
+                      (if it.secret then "environment variable (secret)"
+                       else "environment variable")
+                    ()
+                else
+                  T.CompletionItem.create ~label:it.label
+                    ~kind:T.CompletionItemKind.Variable ~detail:"block alias" ())
       in
       respond r.id (`List (List.map T.CompletionItem.yojson_of_t items)))
 
@@ -296,6 +309,10 @@ let handle_notification (n : Jsonrpc.Notification.t) =
       let p = T.DidCloseTextDocumentParams.t_of_yojson (params_json n.params) in
       Hashtbl.remove docs (T.DocumentUri.to_string p.textDocument.uri)
   | "exit" -> exit (if !shutdown_received then 0 else 1)
+  (* custom: the client signals that a block ran, so inferred shapes may
+     have changed — re-publish diagnostics for every open document *)
+  | "httui/refresh" ->
+      Hashtbl.iter (fun _ (uri, text) -> publish_diagnostics uri text) docs
   | _ -> ()
 
 (* --- main loop ---------------------------------------------------------- *)
@@ -305,7 +322,7 @@ let () =
      enrichment; the server runs fine without it) *)
   (let rec parse = function
      | "--db" :: path :: rest ->
-         Env_store.configure path;
+         Db_conn.configure path;
          parse rest
      | _ :: rest -> parse rest
      | [] -> ()
