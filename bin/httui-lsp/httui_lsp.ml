@@ -99,7 +99,73 @@ let doc_updated uri text =
 let params_json (params : Jsonrpc.Structured.t option) =
   match params with Some p -> Jsonrpc.Structured.yojson_of_t p | None -> `Null
 
+(* --- semantic tokens legend (per-client, server-side downgrade) --------- *)
+
+(* Token types are unique per range and clients silently ignore types
+   outside their announced capabilities, so the legend is computed at
+   initialize: an httui.* kind is registered only when the client
+   announced it; otherwise its LSP-standard fallback takes the slot. *)
+
+let legend_types = ref [ "variable"; "property" ]
+let legend_modifiers = ref ([] : string list)
+
+let compute_legend ~announced_types ~announced_modifiers =
+  let pick preferred fallback =
+    if List.mem preferred announced_types then preferred else fallback
+  in
+  let names =
+    [
+      pick "httui.alias" "variable";
+      pick "httui.env_var" "variable";
+      pick "httui.ref_path" "property";
+    ]
+  in
+  legend_types := List.sort_uniq compare names;
+  legend_modifiers :=
+    List.filter
+      (fun m -> List.mem m announced_modifiers)
+      [ "declaration"; "unresolved" ]
+
+let type_index (kind : Httui_lang.Semantic_tokens.kind) =
+  let name =
+    let mem n = List.mem n !legend_types in
+    match kind with
+    | Httui_lang.Semantic_tokens.Alias ->
+        if mem "httui.alias" then "httui.alias" else "variable"
+    | Httui_lang.Semantic_tokens.Env_var ->
+        if mem "httui.env_var" then "httui.env_var" else "variable"
+    | Httui_lang.Semantic_tokens.Ref_path ->
+        if mem "httui.ref_path" then "httui.ref_path" else "property"
+  in
+  let rec idx i = function
+    | [] -> 0
+    | x :: rest -> if x = name then i else idx (i + 1) rest
+  in
+  idx 0 !legend_types
+
+let modifier_bits (t : Httui_lang.Semantic_tokens.t) =
+  List.fold_left
+    (fun bits (i, m) ->
+      let active =
+        (m = "declaration" && t.declaration)
+        || (m = "unresolved" && t.unresolved)
+      in
+      if active then bits lor (1 lsl i) else bits)
+    0
+    (List.mapi (fun i m -> (i, m)) !legend_modifiers)
+
 let on_initialize (r : Jsonrpc.Request.t) =
+  (try
+     let p = T.InitializeParams.t_of_yojson (params_json r.params) in
+     match p.capabilities.textDocument with
+     | Some td -> (
+         match td.semanticTokens with
+         | Some st ->
+             compute_legend ~announced_types:st.tokenTypes
+               ~announced_modifiers:st.tokenModifiers
+         | None -> compute_legend ~announced_types:[] ~announced_modifiers:[])
+     | None -> compute_legend ~announced_types:[] ~announced_modifiers:[]
+   with _ -> compute_legend ~announced_types:[] ~announced_modifiers:[]);
   let capabilities =
     T.ServerCapabilities.create
       ~textDocumentSync:
@@ -109,6 +175,13 @@ let on_initialize (r : Jsonrpc.Request.t) =
       ~hoverProvider:(`Bool true)
       ~completionProvider:
         (T.CompletionOptions.create ~triggerCharacters:[ "{" ] ())
+      ~semanticTokensProvider:
+        (`SemanticTokensOptions
+           (T.SemanticTokensOptions.create
+              ~legend:
+                (T.SemanticTokensLegend.create ~tokenTypes:!legend_types
+                   ~tokenModifiers:!legend_modifiers)
+              ~full:(`Bool true) ()))
       ()
   in
   let serverInfo =
@@ -155,6 +228,32 @@ let on_completion (r : Jsonrpc.Request.t) =
       in
       respond r.id (`List (List.map T.CompletionItem.yojson_of_t items)))
 
+let on_semantic_tokens (r : Jsonrpc.Request.t) =
+  let p = T.SemanticTokensParams.t_of_yojson (params_json r.params) in
+  with_doc r.id p.textDocument.uri (fun text ->
+      let blocks = Httui_lang.Fence_scanner.scan text in
+      let tokens = Httui_lang.Semantic_tokens.of_blocks blocks in
+      let data =
+        let prev_line = ref 0 and prev_char = ref 0 in
+        List.concat_map
+          (fun (t : Httui_lang.Semantic_tokens.t) ->
+            let pos = Httui_lang.Doc_position.of_offset text t.t_start in
+            let length =
+              Httui_lang.Doc_position.utf16_units text ~from:t.t_start
+                ~until:t.t_stop
+            in
+            let dl = pos.line - !prev_line in
+            let dc =
+              if dl = 0 then pos.character - !prev_char else pos.character
+            in
+            prev_line := pos.line;
+            prev_char := pos.character;
+            [ dl; dc; length; type_index t.kind; modifier_bits t ])
+          tokens
+      in
+      let result = T.SemanticTokens.create ~data:(Array.of_list data) () in
+      respond r.id (T.SemanticTokens.yojson_of_t result))
+
 let shutdown_received = ref false
 
 let handle_request (r : Jsonrpc.Request.t) =
@@ -162,6 +261,7 @@ let handle_request (r : Jsonrpc.Request.t) =
   | "initialize" -> on_initialize r
   | "textDocument/hover" -> on_hover r
   | "textDocument/completion" -> on_completion r
+  | "textDocument/semanticTokens/full" -> on_semantic_tokens r
   | "shutdown" ->
       shutdown_received := true;
       respond r.id `Null

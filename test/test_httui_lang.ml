@@ -120,6 +120,39 @@ let () =
     (Httui_lang.Analyze.completion_at doc blocks ~offset:(b2.content_offset + 4)
     = []);
 
+  (* --- semantic tokens --- *)
+  let toks = Httui_lang.Semantic_tokens.of_blocks blocks in
+  (* 2 alias declarations + ghost (1 name + 1 segment)
+     + req1 ref (1 name + 2 segments) + TOKEN (1 name) *)
+  check "token count" (List.length toks = 8);
+  (match toks with
+  | first :: _ ->
+      check "first token is req1 declaration"
+        (first.declaration
+        && first.kind = Httui_lang.Semantic_tokens.Alias
+        && String.sub doc first.t_start (first.t_stop - first.t_start) = "req1"
+        )
+  | [] -> check "first token is req1 declaration" false);
+  check "ghost name token is unresolved"
+    (List.exists
+       (fun (t : Httui_lang.Semantic_tokens.t) ->
+         t.unresolved
+         && String.sub doc t.t_start (t.t_stop - t.t_start) = "ghost")
+       toks);
+  check "TOKEN is env var kind"
+    (List.exists
+       (fun (t : Httui_lang.Semantic_tokens.t) ->
+         t.kind = Httui_lang.Semantic_tokens.Env_var
+         && String.sub doc t.t_start (t.t_stop - t.t_start) = "TOKEN")
+       toks);
+  check "tokens sorted by position"
+    (let rec sorted = function
+       | (a : Httui_lang.Semantic_tokens.t) :: (b :: _ as rest) ->
+           a.t_start <= b.t_start && sorted rest
+       | _ -> true
+     in
+     sorted toks);
+
   (* --- positions (UTF-16 with multibyte) --- *)
   let mdoc = "caf\xc3\xa9 {{x}}\n" in
   let p = Httui_lang.Doc_position.of_offset mdoc 5 in
