@@ -188,6 +188,175 @@ let () =
      in
      sorted toks);
 
+  (* --- shapes: typed path resolution --- *)
+  let module S = Httui_lang.Shape in
+  let body =
+    S.Object_
+      [
+        ("id", S.Scalar "number");
+        ("name", S.Scalar "string");
+        ("items", S.Array_ (Some (S.Object_ [ ("sku", S.Scalar "string") ])));
+        ("empty", S.Array_ None);
+      ]
+  in
+  let user_shape = S.Object_ [ ("body", body) ] in
+  check "resolve scalar field"
+    (S.resolve_ref ~response:user_shape ~db:false [ "response"; "body"; "id" ]
+    = S.Found (S.Scalar "number"));
+  check "envelope exposes status"
+    (S.resolve_ref ~response:user_shape ~db:false [ "status" ]
+    = S.Found (S.Scalar "string"));
+  check "missing field reports level and candidates"
+    (match
+       S.resolve_ref ~response:user_shape ~db:false
+         [ "response"; "body"; "nme" ]
+     with
+    | S.Missing { index = 2; segment = "nme"; available } ->
+        List.mem "name" available
+    | _ -> false);
+  check "entering a scalar is not_object"
+    (match
+       S.resolve_ref ~response:user_shape ~db:false
+         [ "response"; "body"; "id"; "x" ]
+     with
+    | S.Not_object { index = 3; parent = "number"; _ } -> true
+    | _ -> false);
+  check "arrays auto-descend into the sampled element"
+    (S.resolve_ref ~response:user_shape ~db:false
+       [ "response"; "body"; "items"; "sku" ]
+    = S.Found (S.Scalar "string"));
+  check "empty array sample is opaque"
+    (S.resolve_ref ~response:user_shape ~db:false
+       [ "response"; "body"; "empty"; "x" ]
+    = S.Opaque);
+  let db_shape =
+    S.Object_
+      [
+        ( "results",
+          S.Array_
+            (Some
+               (S.Object_
+                  [
+                    ( "rows",
+                      S.Array_ (Some (S.Object_ [ ("id", S.Scalar "number") ]))
+                    );
+                  ])) );
+      ]
+  in
+  check "db view accepts first-row column at response level"
+    (S.resolve_ref ~response:db_shape ~db:true [ "response"; "id" ]
+    = S.Found (S.Scalar "number"));
+  check "without db view the column is missing"
+    (match S.resolve_ref ~response:db_shape ~db:false [ "response"; "id" ] with
+    | S.Missing _ -> true
+    | _ -> false);
+  check "fields at the ref root are the envelope"
+    (S.fields_at ~response:user_shape ~db:false []
+    = Some [ ("response", user_shape); ("status", S.Scalar "string") ]);
+  check "fields after a path are the object keys"
+    (match
+       S.fields_at ~response:user_shape ~db:false [ "response"; "body" ]
+     with
+    | Some fields -> List.map fst fields = [ "id"; "name"; "items"; "empty" ]
+    | None -> false);
+  check "type_name flattens arrays"
+    (S.type_name (S.Array_ (Some (S.Scalar "string"))) = "array<string>");
+  check "suggest tolerates one edit on short names"
+    (S.suggest "nme" [ "name"; "items" ] = Some "name");
+  check "suggest rejects distant candidates"
+    (S.suggest "zz" [ "id"; "name" ] = None);
+
+  (* --- analyze with shapes --- *)
+  let typed_doc =
+    String.concat "\n"
+      [
+        "```http alias=req1";
+        "GET /u";
+        "```";
+        "";
+        "```http alias=req2";
+        "GET /x?a={{req1.response.body.id}}&b={{req1.response.body.nme}}";
+        "```";
+        "";
+      ]
+  in
+  let typed_blocks = Httui_lang.Fence_scanner.scan typed_doc in
+  let shapes = [ ("req1", user_shape) ] in
+  let find_sub needle =
+    let n = String.length needle in
+    let rec go i =
+      if i + n > String.length typed_doc then failwith ("not found: " ^ needle)
+      else if String.sub typed_doc i n = needle then i
+      else go (i + 1)
+    in
+    go 0
+  in
+  check "no shapes, no field diagnostics"
+    (Httui_lang.Analyze.diagnostics typed_blocks = []);
+  (match Httui_lang.Analyze.diagnostics ~shapes typed_blocks with
+  | [ d ] ->
+      check "typo squiggle targets the bad segment"
+        (String.sub typed_doc d.start_ (d.stop_ - d.start_) = "nme"
+        && d.severity = Httui_lang.Analyze.Warning);
+      check "typo message suggests the close field"
+        (let needle = "did you mean 'name'?" in
+         let rec has i =
+           i + String.length needle <= String.length d.message
+           && (String.sub d.message i (String.length needle) = needle
+              || has (i + 1))
+         in
+         has 0)
+  | l ->
+      check "typo squiggle targets the bad segment" false;
+      check "typo message suggests the close field" (List.length l = -1));
+  let hover_md off =
+    match Httui_lang.Analyze.hover_at ~shapes typed_blocks ~offset:off with
+    | Some h -> h.markdown
+    | None -> ""
+  in
+  let has_sub hay needle =
+    let n = String.length needle in
+    let rec go i =
+      i + n <= String.length hay && (String.sub hay i n = needle || go (i + 1))
+    in
+    go 0
+  in
+  check "hover on a leaf segment shows its type"
+    (has_sub (hover_md (find_sub "id}}&b")) "`number`");
+  check "hover on an object segment lists fields"
+    (let md = hover_md (find_sub "body.id") in
+     has_sub md "object" && has_sub md "`name`: string");
+  check "hover on a typo says not found with hint"
+    (let md = hover_md (find_sub "nme") in
+     has_sub md "not found" && has_sub md "did you mean 'name'?");
+  let compl_doc =
+    "```http alias=req1\n\
+     GET /u\n\
+     ```\n\n\
+     ```http alias=req2\n\
+     GET /x?a={{req1.response.body.\n\
+     ```\n"
+  in
+  let compl_blocks = Httui_lang.Fence_scanner.scan compl_doc in
+  let dot =
+    let rec go i =
+      if String.sub compl_doc i 14 = "response.body." then i + 14 else go (i + 1)
+    in
+    go 0
+  in
+  check "path completion offers the shape's fields with types"
+    (Httui_lang.Analyze.completion_at ~shapes compl_doc compl_blocks ~offset:dot
+    |> List.map (fun (i : Httui_lang.Analyze.completion_item) ->
+        (i.label, i.field_type))
+    = [
+        ("id", Some "number");
+        ("name", Some "string");
+        ("items", Some "array<object>");
+        ("empty", Some "array");
+      ]);
+  check "path completion without a shape is empty"
+    (Httui_lang.Analyze.completion_at compl_doc compl_blocks ~offset:dot = []);
+
   (* --- positions (UTF-16 with multibyte) --- *)
   let mdoc = "caf\xc3\xa9 {{x}}\n" in
   let p = Httui_lang.Doc_position.of_offset mdoc 5 in

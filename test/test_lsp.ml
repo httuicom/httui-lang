@@ -330,10 +330,10 @@ let () =
   send_to c2 (notif "exit");
 
   (* --- third client: --db fixture enriches completion with env keys --- *)
-  let db_path =
+  let db_path, db_exec =
     let path = Filename.temp_file "httui-lsp-test" ".db" in
     Sys.remove path;
-    (match Caqti_blocking.connect (Uri.of_string ("sqlite3:" ^ path)) with
+    match Caqti_blocking.connect (Uri.of_string ("sqlite3:" ^ path)) with
     | Error e -> failwith (Caqti_error.show e)
     | Ok conn ->
         let module C = (val conn : Caqti_blocking.CONNECTION) in
@@ -353,8 +353,12 @@ let () =
         exec "INSERT INTO env_variables VALUES ('v1', 'e1', 'BASE_URL', '', 0)";
         exec
           "INSERT INTO env_variables VALUES ('v2', 'e1', 'API_TOKEN', \
-           '__KEYCHAIN__', 1)");
-    path
+           '__KEYCHAIN__', 1)";
+        exec
+          "CREATE TABLE block_schema_cache (file_path TEXT NOT NULL, alias \
+           TEXT NOT NULL, shape TEXT NOT NULL, cache_schema_version INTEGER \
+           NOT NULL, updated_at TEXT, PRIMARY KEY (file_path, alias))";
+        (path, exec)
   in
   let c3 = spawn_server ~args:[ "--db"; db_path ] () in
   send_to c3
@@ -411,6 +415,95 @@ let () =
                = Some (`String "environment variable (secret)"))
           items
     | _ -> false);
+
+  (* --- typed refs: a block run lands a shape, httui/refresh republishes ---
+     the row is keyed vault-relative (one of the two writer conventions);
+     the server matches it against the URI's absolute path by suffix *)
+  db_exec
+    "INSERT INTO block_schema_cache VALUES ('t.md', 'req1', \
+     '{\"body\":{\"id\":\"number\",\"name\":\"string\"}}', 1, '')";
+  send_to c3 (notif "httui/refresh");
+  let rdiag = recv_from c3 in
+  check "refresh republishes diagnostics"
+    (member "method" rdiag = Some (`String "textDocument/publishDiagnostics"));
+  let rdiags =
+    match Option.bind (member "params" rdiag) (member "diagnostics") with
+    | Some (`List l) -> l
+    | _ -> []
+  in
+  (* doc_bad's [{{req1.body.id}}] skips the [response] envelope segment,
+     so the fresh shape turns it into a field warning next to the ghost
+     error *)
+  check "shape adds a field warning" (List.length rdiags = 2);
+  check "field warning is severity warning with message"
+    (List.exists
+       (fun d ->
+         member "severity" d = Some (`Int 2)
+         &&
+         match member "message" d with
+         | Some (`String m) -> contains m "not found"
+         | _ -> false)
+       rdiags);
+
+  (* a correct path is quiet; an open path completes with typed fields *)
+  let doc_typed =
+    "# nota\n\n\
+     ```http alias=req1\n\
+     GET https://api.example.com/users\n\
+     ```\n\n\
+     ```http alias=req2\n\
+     GET https://x.dev/{{req1.response.body.id}}?n={{req1.response.\n\
+     ```\n"
+  in
+  send_to c3
+    (notif "textDocument/didChange"
+       ~params:
+         (`Assoc
+            [
+              ( "textDocument",
+                `Assoc [ ("uri", `String "file:///t.md"); ("version", `Int 2) ]
+              );
+              ( "contentChanges",
+                `List [ `Assoc [ ("text", `String doc_typed) ] ] );
+            ]));
+  let tdiag = recv_from c3 in
+  check "valid typed path publishes no diagnostics"
+    (Option.bind (member "params" tdiag) (member "diagnostics")
+    = Some (`List []));
+  send_to c3
+    (req 3 "textDocument/completion"
+       ~params:
+         (`Assoc
+            [
+              ("textDocument", text_doc);
+              ("position", `Assoc [ ("line", `Int 7); ("character", `Int 62) ]);
+            ]));
+  let comp4 = recv_from c3 in
+  check "path completion offers shape fields with type detail"
+    (match member "result" comp4 with
+    | Some (`List [ item ]) ->
+        member "label" item = Some (`String "body")
+        && member "detail" item = Some (`String "object")
+        && member "kind" item = Some (`Int 5)
+    | _ -> false);
+  send_to c3
+    (req 4 "textDocument/hover"
+       ~params:
+         (`Assoc
+            [
+              ("textDocument", text_doc);
+              ("position", `Assoc [ ("line", `Int 7); ("character", `Int 39) ]);
+            ]));
+  let hov4 = recv_from c3 in
+  check "hover on a typed leaf shows the field type"
+    (match
+       Option.bind
+         (Option.bind (member "result" hov4) (member "contents"))
+         (member "value")
+     with
+    | Some (`String v) -> contains v "number"
+    | _ -> false);
+
   send_to c3 (req 9 "shutdown");
   let _ = recv_from c3 in
   send_to c3 (notif "exit");

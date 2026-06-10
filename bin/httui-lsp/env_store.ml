@@ -4,26 +4,6 @@
    the tens of microseconds and the active environment can change while
    the server runs. *)
 
-let db_uri = ref None
-
-let configure path =
-  db_uri := Some (Uri.of_string ("sqlite3:" ^ path ^ "?busy_timeout=5000"))
-
-let connection = ref None
-
-let connect () =
-  match !connection with
-  | Some c -> Some c
-  | None -> (
-      match !db_uri with
-      | None -> None
-      | Some uri -> (
-          match Caqti_blocking.connect uri with
-          | Ok c ->
-              connection := Some c;
-              Some c
-          | Error _ -> None))
-
 let keys_query =
   let open Caqti_request.Infix in
   (Caqti_type.unit ->* Caqti_type.(t2 string bool))
@@ -34,7 +14,7 @@ let keys_query =
     was configured or the read fails (analysis degrades gracefully — env names
     are an enrichment, not a requirement) *)
 let keys () =
-  match connect () with
+  match Db_conn.connect () with
   | None -> []
   | Some conn -> (
       let module C = (val conn : Caqti_blocking.CONNECTION) in
