@@ -13,7 +13,9 @@ let check name cond =
 
 let server = "../bin/httui-lsp/httui_lsp.exe"
 
-let proc_out, proc_in =
+type client = { ic : in_channel; oc : out_channel }
+
+let spawn_server () =
   let from_server, server_stdout = Unix.pipe () in
   let server_stdin, to_server = Unix.pipe () in
   let _pid =
@@ -22,18 +24,23 @@ let proc_out, proc_in =
   in
   Unix.close server_stdout;
   Unix.close server_stdin;
-  (Unix.in_channel_of_descr from_server, Unix.out_channel_of_descr to_server)
+  {
+    ic = Unix.in_channel_of_descr from_server;
+    oc = Unix.out_channel_of_descr to_server;
+  }
 
-let send json =
+let c1 = spawn_server ()
+
+let send_to client json =
   let body = Yojson.Safe.to_string json in
-  Printf.fprintf proc_in "Content-Length: %d\r\n\r\n%s" (String.length body)
+  Printf.fprintf client.oc "Content-Length: %d\r\n\r\n%s" (String.length body)
     body;
-  flush proc_in
+  flush client.oc
 
-let recv () =
+let recv_from client =
   let len = ref (-1) in
   let rec headers () =
-    let line = input_line proc_out in
+    let line = input_line client.ic in
     let line =
       let n = String.length line in
       if n > 0 && line.[n - 1] = '\r' then String.sub line 0 (n - 1) else line
@@ -52,8 +59,10 @@ let recv () =
     end
   in
   headers ();
-  Yojson.Safe.from_string (really_input_string proc_out !len)
+  Yojson.Safe.from_string (really_input_string client.ic !len)
 
+let send json = send_to c1 json
+let recv () = recv_from c1
 let member k json = match json with `Assoc l -> List.assoc_opt k l | _ -> None
 
 let contains hay needle =
@@ -114,6 +123,17 @@ let () =
     (Option.bind caps (member "hoverProvider") = Some (`Bool true));
   check "initialize declares completion"
     (Option.is_some (Option.bind caps (member "completionProvider")));
+  (* vanilla client did not announce httui.* kinds: the legend must hold
+     only the downgraded fallbacks *)
+  let legend_types =
+    Option.bind
+      (Option.bind
+         (Option.bind caps (member "semanticTokensProvider"))
+         (member "legend"))
+      (member "tokenTypes")
+  in
+  check "vanilla legend downgrades to fallbacks"
+    (legend_types = Some (`List [ `String "property"; `String "variable" ]));
   send (notif "initialized" ~params:(`Assoc []));
 
   (* didOpen pushes diagnostics for the unknown alias *)
@@ -202,8 +222,110 @@ let () =
   in
   check "diagnostics cleared after fix" (diags2 = []);
 
+  (* semantic tokens on the vanilla client: data well-formed *)
+  send
+    (req 4 "textDocument/semanticTokens/full"
+       ~params:(`Assoc [ ("textDocument", text_doc) ]));
+  let toks = recv () in
+  let data =
+    match Option.bind (member "result" toks) (member "data") with
+    | Some (`List l) -> l
+    | _ -> []
+  in
+  check "semantic tokens data non-empty, stride 5"
+    (List.length data > 0 && List.length data mod 5 = 0);
+
   (* shutdown / exit *)
   send (req 9 "shutdown");
   let _ = recv () in
   send (notif "exit");
+
+  (* --- second client: announces httui.* kinds and modifiers --- *)
+  let c2 = spawn_server () in
+  send_to c2
+    (req 1 "initialize"
+       ~params:
+         (`Assoc
+            [
+              ("processId", `Null);
+              ("rootUri", `Null);
+              ( "capabilities",
+                `Assoc
+                  [
+                    ( "textDocument",
+                      `Assoc
+                        [
+                          ( "semanticTokens",
+                            `Assoc
+                              [
+                                ("requests", `Assoc [ ("full", `Bool true) ]);
+                                ( "tokenTypes",
+                                  `List
+                                    [
+                                      `String "variable";
+                                      `String "property";
+                                      `String "httui.alias";
+                                      `String "httui.env_var";
+                                      `String "httui.ref_path";
+                                    ] );
+                                ( "tokenModifiers",
+                                  `List
+                                    [
+                                      `String "declaration";
+                                      `String "unresolved";
+                                    ] );
+                                ("formats", `List [ `String "relative" ]);
+                              ] );
+                        ] );
+                  ] );
+            ]));
+  let init2 = recv_from c2 in
+  let caps2 = Option.bind (member "result" init2) (member "capabilities") in
+  let legend2 =
+    match
+      Option.bind
+        (Option.bind
+           (Option.bind caps2 (member "semanticTokensProvider"))
+           (member "legend"))
+        (member "tokenTypes")
+    with
+    | Some (`List l) -> l
+    | _ -> []
+  in
+  check "announcing client gets httui.* legend"
+    (List.mem (`String "httui.alias") legend2
+    && List.mem (`String "httui.ref_path") legend2);
+  send_to c2 (notif "initialized" ~params:(`Assoc []));
+  send_to c2
+    (notif "textDocument/didOpen"
+       ~params:
+         (`Assoc
+            [
+              ( "textDocument",
+                `Assoc
+                  [
+                    ("uri", `String "file:///t.md");
+                    ("languageId", `String "markdown");
+                    ("version", `Int 1);
+                    ("text", `String doc_bad);
+                  ] );
+            ]));
+  let _diag = recv_from c2 in
+  send_to c2
+    (req 2 "textDocument/semanticTokens/full"
+       ~params:(`Assoc [ ("textDocument", text_doc) ]));
+  let toks2 = recv_from c2 in
+  let data2 =
+    match Option.bind (member "result" toks2) (member "data") with
+    | Some (`List l) -> List.map (function `Int i -> i | _ -> -1) l
+    | _ -> []
+  in
+  (* first token: alias declaration [req1] on line 2, char 14, length 4,
+     type httui.alias (index 0 in the sorted legend), declaration bit set *)
+  check "first token is the req1 declaration with modifier"
+    (match data2 with 2 :: 14 :: 4 :: 0 :: 1 :: _ -> true | _ -> false);
+  send_to c2 (req 9 "shutdown");
+  let _ = recv_from c2 in
+  send_to c2 (notif "exit");
+
   if !failures > 0 then exit 1

@@ -11,6 +11,8 @@ type occurrence = {
   ref_start : int;  (** doc-absolute byte range of the whole ref *)
   ref_stop : int;
   text : string;  (** ref body text ([req1.body.id]) *)
+  path_segments : (int * int) list;
+      (** doc-absolute ranges of path identifiers ([body], [id]) *)
 }
 
 let named_children node =
@@ -39,15 +41,28 @@ let rec collect_refs node ~content ~base acc =
           with
           | None -> acc
           | Some ident ->
-              let has_path =
-                List.exists (fun c -> kind c = "dot_path") (named_children body)
+              let dot_path =
+                List.find_opt
+                  (fun c -> kind c = "dot_path")
+                  (named_children body)
+              in
+              let path_segments =
+                match dot_path with
+                | None -> []
+                | Some dp ->
+                    named_children dp
+                    |> List.concat_map (fun seg ->
+                        named_children seg
+                        |> List.filter (fun c -> kind c = "identifier")
+                        |> List.map (fun id ->
+                            (base + start_byte id, base + end_byte id)))
               in
               let occ =
                 {
                   name =
                     String.sub content (start_byte ident)
                       (end_byte ident - start_byte ident);
-                  has_path;
+                  has_path = Option.is_some dot_path;
                   name_start = base + start_byte ident;
                   name_stop = base + end_byte ident;
                   ref_start = base + start_byte node;
@@ -55,6 +70,7 @@ let rec collect_refs node ~content ~base acc =
                   text =
                     String.sub content (start_byte body)
                       (end_byte body - start_byte body);
+                  path_segments;
                 }
               in
               occ :: acc)
