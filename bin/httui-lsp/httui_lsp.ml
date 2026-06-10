@@ -333,10 +333,16 @@ let () =
   try
     while true do
       let body = read_message () in
-      let json = Yojson.Safe.from_string body in
-      match Jsonrpc.Packet.t_of_yojson json with
-      | Jsonrpc.Packet.Request r -> handle_request r
-      | Jsonrpc.Packet.Notification n -> handle_notification n
+      (* one malformed message must not kill the session — skip it and
+         keep serving (EOF still ends the loop) *)
+      try
+        let json = Yojson.Safe.from_string body in
+        match Jsonrpc.Packet.t_of_yojson json with
+        | Jsonrpc.Packet.Request r -> handle_request r
+        | Jsonrpc.Packet.Notification n -> handle_notification n
+        | _ -> ()
+      with
+      | End_of_file -> raise End_of_file
       | _ -> ()
     done
   with End_of_file -> ()
