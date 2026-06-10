@@ -57,7 +57,9 @@ let block_index_at blocks ~offset =
   in
   go 0 blocks
 
-let hover_at blocks ~offset =
+(* [env_keys] comes from the caller (the IO shell reads names +
+   [is_secret] from storage; values never reach this layer). *)
+let hover_at ?(env_keys = []) blocks ~offset =
   match block_index_at blocks ~offset with
   | None -> None
   | Some (i, b) ->
@@ -67,17 +69,26 @@ let hover_at blocks ~offset =
       |> Option.map (fun (r : Refs.occurrence) ->
           let scope = aliases_above blocks ~index:i in
           let markdown =
-            match (r.has_path, List.assoc_opt r.name scope) with
-            | _, Some (decl : Block.t) ->
+            match
+              ( r.has_path,
+                List.assoc_opt r.name scope,
+                List.assoc_opt r.name env_keys )
+            with
+            | _, Some (decl : Block.t), _ ->
                 Printf.sprintf
                   "**%s** — block alias declared on line %d (` ```%s `)\n\n\
                    `{{%s}}`"
                   r.name (decl.open_line + 1) decl.lang r.text
-            | true, None ->
+            | true, None, _ ->
                 Printf.sprintf
                   "**%s** — unknown block alias (no block above declares it)"
                   r.name
-            | false, None ->
+            | false, None, Some is_secret ->
+                Printf.sprintf
+                  "**%s** — environment variable in the active environment%s"
+                  r.name
+                  (if is_secret then " (secret — value never shown)" else "")
+            | false, None, None ->
                 Printf.sprintf
                   "**%s** — environment variable or block alias (resolved at \
                    run time)"
@@ -85,9 +96,12 @@ let hover_at blocks ~offset =
           in
           { h_start = r.ref_start; h_stop = r.ref_stop; markdown })
 
+type completion_item = { label : string; is_env : bool; secret : bool }
+
 (* completion inside an open [{{] before the cursor (no closing [}}]
-   between) — offers the aliases in scope for the enclosing block *)
-let completion_at doc blocks ~offset =
+   between) — offers the aliases in scope for the enclosing block plus
+   the environment variable names supplied by the caller *)
+let completion_at ?(env_keys = []) doc blocks ~offset =
   match block_index_at blocks ~offset with
   | None -> []
   | Some (i, _) -> (
@@ -104,4 +118,10 @@ let completion_at doc blocks ~offset =
       in
       match open_pos with
       | None -> []
-      | Some _ -> List.map fst (aliases_above blocks ~index:i))
+      | Some _ ->
+          List.map
+            (fun (a, _) -> { label = a; is_env = false; secret = false })
+            (aliases_above blocks ~index:i)
+          @ List.map
+              (fun (k, secret) -> { label = k; is_env = true; secret })
+              env_keys)

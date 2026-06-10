@@ -17,6 +17,9 @@ depends: [
   "lsp"
   "jsonrpc"
   "yojson"
+  "caqti"
+  "caqti-driver-sqlite3"
+  "uri"
   "odoc" {with-doc}
 ]
 build: [

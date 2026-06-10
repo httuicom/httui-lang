@@ -20,4 +20,7 @@
   (tree-sitter (>= 0.1.0))
   lsp
   jsonrpc
-  yojson))
+  yojson
+  caqti
+  caqti-driver-sqlite3
+  uri))

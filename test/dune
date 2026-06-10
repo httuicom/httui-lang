@@ -1,4 +1,11 @@
 (tests
  (names test_httui_lang test_lsp)
- (libraries httui_lang unix yojson)
+ (libraries
+  httui_lang
+  unix
+  yojson
+  caqti
+  caqti.blocking
+  caqti-driver-sqlite3
+  uri)
  (deps %{exe:../bin/httui-lsp/httui_lsp.exe}))
