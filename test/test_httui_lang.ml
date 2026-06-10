@@ -114,11 +114,46 @@ let () =
 
   (* --- completion --- *)
   let after_open = b2.content_offset + 35 in
+  let labels items =
+    List.map (fun (i : Httui_lang.Analyze.completion_item) -> i.label) items
+  in
   check "completion offers scope aliases"
-    (Httui_lang.Analyze.completion_at doc blocks ~offset:after_open = [ "req1" ]);
+    (labels (Httui_lang.Analyze.completion_at doc blocks ~offset:after_open)
+    = [ "req1" ]);
   check "completion outside braces empty"
     (Httui_lang.Analyze.completion_at doc blocks ~offset:(b2.content_offset + 4)
     = []);
+  let with_env =
+    Httui_lang.Analyze.completion_at
+      ~env_keys:[ ("BASE_URL", false); ("API_TOKEN", true) ]
+      doc blocks ~offset:after_open
+  in
+  check "completion appends env keys"
+    (labels with_env = [ "req1"; "BASE_URL"; "API_TOKEN" ]);
+  check "env completion carries secret flag"
+    (List.exists
+       (fun (i : Httui_lang.Analyze.completion_item) ->
+         i.label = "API_TOKEN" && i.is_env && i.secret)
+       with_env);
+
+  (* hover on a bare key known to the active environment *)
+  let env_doc = "```http alias=a\nGET /{{API_TOKEN}}\n```\n" in
+  let env_blocks = Httui_lang.Fence_scanner.scan env_doc in
+  (match
+     Httui_lang.Analyze.hover_at
+       ~env_keys:[ ("API_TOKEN", true) ]
+       env_blocks ~offset:23
+   with
+  | Some h ->
+      check "hover marks secret env var"
+        (let needle = "secret" in
+         let rec has i =
+           i + String.length needle <= String.length h.markdown
+           && (String.sub h.markdown i (String.length needle) = needle
+              || has (i + 1))
+         in
+         has 0)
+  | None -> check "hover marks secret env var" false);
 
   (* --- semantic tokens --- *)
   let toks = Httui_lang.Semantic_tokens.of_blocks blocks in

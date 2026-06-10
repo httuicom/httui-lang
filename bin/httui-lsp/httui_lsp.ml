@@ -201,7 +201,9 @@ let on_hover (r : Jsonrpc.Request.t) =
   with_doc r.id p.textDocument.uri (fun text ->
       let blocks = Httui_lang.Fence_scanner.scan text in
       let offset = offset_of_position text p.position in
-      match Httui_lang.Analyze.hover_at blocks ~offset with
+      match
+        Httui_lang.Analyze.hover_at ~env_keys:(Env_store.keys ()) blocks ~offset
+      with
       | None -> respond r.id `Null
       | Some h ->
           let hover =
@@ -221,10 +223,19 @@ let on_completion (r : Jsonrpc.Request.t) =
       let blocks = Httui_lang.Fence_scanner.scan text in
       let offset = offset_of_position text p.position in
       let items =
-        Httui_lang.Analyze.completion_at text blocks ~offset
-        |> List.map (fun label ->
-            T.CompletionItem.create ~label ~kind:T.CompletionItemKind.Variable
-              ~detail:"block alias" ())
+        Httui_lang.Analyze.completion_at ~env_keys:(Env_store.keys ()) text
+          blocks ~offset
+        |> List.map (fun (it : Httui_lang.Analyze.completion_item) ->
+            if it.is_env then
+              T.CompletionItem.create ~label:it.label
+                ~kind:T.CompletionItemKind.Constant
+                ~detail:
+                  (if it.secret then "environment variable (secret)"
+                   else "environment variable")
+                ()
+            else
+              T.CompletionItem.create ~label:it.label
+                ~kind:T.CompletionItemKind.Variable ~detail:"block alias" ())
       in
       respond r.id (`List (List.map T.CompletionItem.yojson_of_t items)))
 
@@ -290,6 +301,16 @@ let handle_notification (n : Jsonrpc.Notification.t) =
 (* --- main loop ---------------------------------------------------------- *)
 
 let () =
+  (* --db <path>: app database for environment variable NAMES (read-only
+     enrichment; the server runs fine without it) *)
+  (let rec parse = function
+     | "--db" :: path :: rest ->
+         Env_store.configure path;
+         parse rest
+     | _ :: rest -> parse rest
+     | [] -> ()
+   in
+   parse (Array.to_list Sys.argv));
   set_binary_mode_in stdin true;
   set_binary_mode_out stdout true;
   try

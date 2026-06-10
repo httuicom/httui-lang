@@ -15,12 +15,13 @@ let server = "../bin/httui-lsp/httui_lsp.exe"
 
 type client = { ic : in_channel; oc : out_channel }
 
-let spawn_server () =
+let spawn_server ?(args = []) () =
   let from_server, server_stdout = Unix.pipe () in
   let server_stdin, to_server = Unix.pipe () in
   let _pid =
-    Unix.create_process server [| server |] server_stdin server_stdout
-      Unix.stderr
+    Unix.create_process server
+      (Array.of_list (server :: args))
+      server_stdin server_stdout Unix.stderr
   in
   Unix.close server_stdout;
   Unix.close server_stdin;
@@ -327,5 +328,92 @@ let () =
   send_to c2 (req 9 "shutdown");
   let _ = recv_from c2 in
   send_to c2 (notif "exit");
+
+  (* --- third client: --db fixture enriches completion with env keys --- *)
+  let db_path =
+    let path = Filename.temp_file "httui-lsp-test" ".db" in
+    Sys.remove path;
+    (match Caqti_blocking.connect (Uri.of_string ("sqlite3:" ^ path)) with
+    | Error e -> failwith (Caqti_error.show e)
+    | Ok conn ->
+        let module C = (val conn : Caqti_blocking.CONNECTION) in
+        let exec sql =
+          let open Caqti_request.Infix in
+          match C.exec ((Caqti_type.unit ->. Caqti_type.unit) sql) () with
+          | Ok () -> ()
+          | Error e -> failwith (Caqti_error.show e)
+        in
+        exec
+          "CREATE TABLE environments (id TEXT PRIMARY KEY, name TEXT, \
+           is_active INTEGER NOT NULL DEFAULT 0)";
+        exec
+          "CREATE TABLE env_variables (id TEXT PRIMARY KEY, environment_id \
+           TEXT, key TEXT, value TEXT, is_secret INTEGER NOT NULL DEFAULT 0)";
+        exec "INSERT INTO environments VALUES ('e1', 'dev', 1)";
+        exec "INSERT INTO env_variables VALUES ('v1', 'e1', 'BASE_URL', '', 0)";
+        exec
+          "INSERT INTO env_variables VALUES ('v2', 'e1', 'API_TOKEN', \
+           '__KEYCHAIN__', 1)");
+    path
+  in
+  let c3 = spawn_server ~args:[ "--db"; db_path ] () in
+  send_to c3
+    (req 1 "initialize"
+       ~params:
+         (`Assoc
+            [
+              ("processId", `Null);
+              ("rootUri", `Null);
+              ("capabilities", `Assoc []);
+            ]));
+  let _ = recv_from c3 in
+  send_to c3 (notif "initialized" ~params:(`Assoc []));
+  send_to c3
+    (notif "textDocument/didOpen"
+       ~params:
+         (`Assoc
+            [
+              ( "textDocument",
+                `Assoc
+                  [
+                    ("uri", `String "file:///t.md");
+                    ("languageId", `String "markdown");
+                    ("version", `Int 1);
+                    ("text", `String doc_bad);
+                  ] );
+            ]));
+  let _ = recv_from c3 in
+  send_to c3
+    (req 2 "textDocument/completion"
+       ~params:
+         (`Assoc
+            [
+              ("textDocument", text_doc);
+              ("position", `Assoc [ ("line", `Int 7); ("character", `Int 35) ]);
+            ]));
+  let comp3 = recv_from c3 in
+  let comp3_labels =
+    match member "result" comp3 with
+    | Some (`List items) -> List.filter_map (fun i -> member "label" i) items
+    | _ -> []
+  in
+  check "completion includes env keys from --db"
+    (List.mem (`String "BASE_URL") comp3_labels
+    && List.mem (`String "API_TOKEN") comp3_labels
+    && List.mem (`String "req1") comp3_labels);
+  check "secret env key is marked in detail"
+    (match member "result" comp3 with
+    | Some (`List items) ->
+        List.exists
+          (fun i ->
+            member "label" i = Some (`String "API_TOKEN")
+            && member "detail" i
+               = Some (`String "environment variable (secret)"))
+          items
+    | _ -> false);
+  send_to c3 (req 9 "shutdown");
+  let _ = recv_from c3 in
+  send_to c3 (notif "exit");
+  Sys.remove db_path;
 
   if !failures > 0 then exit 1
