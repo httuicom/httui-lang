@@ -4,6 +4,7 @@
 
 LEZER_REFS_DIR := grammars-lezer/lezer-httui-refs
 TS_REFS_DIR    := lib/grammars/tree-sitter-httui-refs
+TS_HTTP_DIR    := lib/grammars/tree-sitter-httui-http
 LSP_DIR        := bin/httui-lsp
 
 .PHONY: help install setup-hooks build build-ocaml build-grammars build-lsp \
@@ -19,6 +20,7 @@ install: ## Install all dependencies
 	opam install --yes --deps-only --with-test .
 	cd $(LEZER_REFS_DIR) && npm install
 	cd $(TS_REFS_DIR) && npm install
+	cd $(TS_HTTP_DIR) && npm install
 
 setup-hooks: ## Install git hooks (commit-msg, pre-push, pre-commit)
 	bash scripts/setup-hooks.sh
@@ -31,6 +33,7 @@ build-ocaml: ## Build OCaml library + LSP binary
 build-grammars: ## Build all grammars
 	cd $(LEZER_REFS_DIR) && npm run build
 	cd $(TS_REFS_DIR) && npx tree-sitter generate
+	cd $(TS_HTTP_DIR) && npx tree-sitter generate
 
 build-lsp: ## Build only the LSP server binary
 	opam exec -- dune build $(LSP_DIR)/httui_lsp.exe
@@ -43,6 +46,7 @@ test-ocaml: ## Run OCaml tests (library + LSP binary)
 test-grammars: ## Run grammar corpus tests
 	cd $(LEZER_REFS_DIR) && npm test
 	cd $(TS_REFS_DIR) && npx tree-sitter test
+	cd $(TS_HTTP_DIR) && npx tree-sitter test
 
 bench: build-ocaml ## Run the LSP transport benchmark
 	python3 bench/lsp_roundtrip.py
@@ -59,10 +63,12 @@ lint-js: ## JS/TS lint via eslint + prettier
 regenerate-grammars: ## Regenerate parser artifacts from grammar definitions
 	cd $(LEZER_REFS_DIR) && npm run build:parser
 	cd $(TS_REFS_DIR) && npx tree-sitter generate
+	cd $(TS_HTTP_DIR) && npx tree-sitter generate
 
 audit: ## Run security audits across ecosystems
 	cd $(LEZER_REFS_DIR) && npm audit --audit-level=moderate
 	cd $(TS_REFS_DIR) && npm audit --audit-level=moderate
+	cd $(TS_HTTP_DIR) && npm audit --audit-level=moderate
 
 clean: clean-ocaml clean-grammars ## Remove all build artifacts
 
@@ -72,3 +78,4 @@ clean-ocaml: ## Clean OCaml build outputs
 clean-grammars: ## Clean grammar build outputs
 	rm -rf $(LEZER_REFS_DIR)/dist $(LEZER_REFS_DIR)/src/parser.js $(LEZER_REFS_DIR)/src/parser.terms.js
 	rm -rf $(TS_REFS_DIR)/build
+	rm -rf $(TS_HTTP_DIR)/build

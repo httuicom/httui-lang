@@ -26,8 +26,8 @@ let is_closing line ~ticks =
         (String.sub line after (String.length line - after))
   | _ -> false
 
-(* "http alias=req1 timeout=30000" -> lang + assoc pairs with the byte
-   offset of each value inside the info string *)
+(* "http alias=req1 timeout=30000" -> lang (with its offset) + key=value
+   tokens carrying full-token and value offsets inside the info string *)
 let parse_info info =
   let tokens =
     let out = ref [] in
@@ -47,8 +47,8 @@ let parse_info info =
     List.rev !out
   in
   match tokens with
-  | [] -> ("", [])
-  | (_, lang) :: rest ->
+  | [] -> ("", 0, [])
+  | (lang_off, lang) :: rest ->
       let pairs =
         List.filter_map
           (fun (off, tok) ->
@@ -58,11 +58,34 @@ let parse_info info =
                 let value =
                   String.sub tok (eq + 1) (String.length tok - eq - 1)
                 in
-                Some (key, (value, off + eq + 1))
+                Some (key, value, off, off + String.length tok, off + eq + 1)
             | None -> None)
           rest
       in
-      (lang, pairs)
+      (lang, lang_off, pairs)
+
+type pending = {
+  ticks : int;
+  lang : string;
+  lang_offset : int;
+  alias : string option;
+  alias_offset : int option;
+  info_tokens : (int * int) list;
+  content_offset : int;
+  open_line : int;
+}
+
+let block_of (p : pending) content =
+  {
+    Block.lang = p.lang;
+    lang_offset = p.lang_offset;
+    alias = p.alias;
+    alias_offset = p.alias_offset;
+    info_tokens = p.info_tokens;
+    content;
+    content_offset = p.content_offset;
+    open_line = p.open_line;
+  }
 
 let scan doc =
   let blocks = ref [] in
@@ -70,7 +93,6 @@ let scan doc =
   let pos = ref 0 in
   let line_no = ref 0 in
   let in_block = ref None in
-  (* (ticks, lang, alias, alias_off, content_start, open_line) *)
   let buf = Buffer.create 256 in
   while !pos <= len do
     let eol =
@@ -82,30 +104,39 @@ let scan doc =
         match fence_prefix line with
         | Some (ticks, after) ->
             let info = String.sub line after (String.length line - after) in
-            let lang, pairs = parse_info info in
-            let alias, alias_off =
-              match List.assoc_opt "alias" pairs with
-              | Some (v, off_in_info) ->
-                  (Some v, Some (!pos + after + off_in_info))
+            let lang, lang_off, pairs = parse_info info in
+            let info_base = !pos + after in
+            let alias, alias_offset =
+              match
+                List.find_opt (fun (k, _, _, _, _) -> k = "alias") pairs
+              with
+              | Some (_, v, _, _, value_off) ->
+                  (Some v, Some (info_base + value_off))
               | None -> (None, None)
             in
-            let content_start = if eol >= len then len else eol + 1 in
+            let info_tokens =
+              List.map
+                (fun (_, _, s, e, _) -> (info_base + s, info_base + e))
+                pairs
+            in
+            let content_offset = if eol >= len then len else eol + 1 in
             Buffer.clear buf;
             in_block :=
-              Some (ticks, lang, alias, alias_off, content_start, !line_no)
+              Some
+                {
+                  ticks;
+                  lang;
+                  lang_offset = info_base + lang_off;
+                  alias;
+                  alias_offset;
+                  info_tokens;
+                  content_offset;
+                  open_line = !line_no;
+                }
         | None -> ())
-    | Some (ticks, lang, alias, alias_off, content_start, open_line) ->
-        if is_closing line ~ticks then begin
-          blocks :=
-            {
-              Block.lang;
-              alias;
-              alias_offset = alias_off;
-              content = Buffer.contents buf;
-              content_offset = content_start;
-              open_line;
-            }
-            :: !blocks;
+    | Some p ->
+        if is_closing line ~ticks:p.ticks then begin
+          blocks := block_of p (Buffer.contents buf) :: !blocks;
           in_block := None
         end
         else begin
@@ -116,16 +147,6 @@ let scan doc =
     incr line_no
   done;
   (match !in_block with
-  | Some (_, lang, alias, alias_off, content_start, open_line) ->
-      blocks :=
-        {
-          Block.lang;
-          alias;
-          alias_offset = alias_off;
-          content = Buffer.contents buf;
-          content_offset = content_start;
-          open_line;
-        }
-        :: !blocks
+  | Some p -> blocks := block_of p (Buffer.contents buf) :: !blocks
   | None -> ());
   List.rev !blocks

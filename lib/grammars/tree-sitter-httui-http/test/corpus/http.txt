@@ -1,0 +1,222 @@
+==============================
+minimal request
+==============================
+GET https://api.example.com/users
+---
+(source_file
+  (request_line
+    (method)
+    (url)))
+
+==============================
+request with inline query
+==============================
+GET https://api.example.com/users?page=1&limit=10
+---
+(source_file
+  (request_line
+    (method)
+    (url)))
+
+==============================
+query continuation lines
+==============================
+GET https://api.example.com/users
+?page=1
+&limit=10
+---
+(source_file
+  (request_line
+    (method)
+    (url))
+  (query_line)
+  (query_line))
+
+==============================
+headers with refs and colons in values
+==============================
+POST https://api.example.com/users
+Authorization: Bearer {{TOKEN}}
+Origin: https://app.example.com
+---
+(source_file
+  (request_line
+    (method)
+    (url))
+  (header_line
+    (header_name)
+    (header_value))
+  (header_line
+    (header_name)
+    (header_value)))
+
+==============================
+header without value
+==============================
+GET /x
+X-Empty:
+---
+(source_file
+  (request_line
+    (method)
+    (url))
+  (header_line
+    (header_name)))
+
+==============================
+hash family: desc, disabled rows, comments
+==============================
+GET /x
+# desc: token for staging
+Authorization: Bearer abc
+# X-Disabled: value
+# &limit=10
+# free-form note
+#bare
+#
+---
+(source_file
+  (request_line
+    (method)
+    (url))
+  (desc_line)
+  (header_line
+    (header_name)
+    (header_value))
+  (disabled_header_line)
+  (disabled_query_line)
+  (comment_line)
+  (comment_line)
+  (comment_line))
+
+==============================
+desc without trailing space is a disabled header
+==============================
+GET /x
+# desc:missing-space
+---
+(source_file
+  (request_line
+    (method)
+    (url))
+  (disabled_header_line))
+
+==============================
+body with header-like line and inner blank lines
+==============================
+POST /x
+Content-Type: application/json
+
+{
+  "note": "b: c",
+
+  "n": 1
+}
+---
+(source_file
+  (request_line
+    (method)
+    (url))
+  (header_line
+    (header_name)
+    (header_value))
+  (body
+    (body_line)
+    (body_line)
+    (body_line)
+    (body_line)))
+
+==============================
+multipart key-value body
+==============================
+POST /upload
+Content-Type: multipart/form-data
+
+name=alice
+avatar=< /tmp/a.png
+# disabled=row
+---
+(source_file
+  (request_line
+    (method)
+    (url))
+  (header_line
+    (header_name)
+    (header_value))
+  (body
+    (body_line)
+    (body_line)
+    (body_line)))
+
+==============================
+leading blank lines and comments before the request
+==============================
+
+# warm-up note
+GET /x
+---
+(source_file
+  (comment_line)
+  (request_line
+    (method)
+    (url)))
+
+==============================
+no trailing newline
+==============================
+GET https://x.com/a
+---
+(source_file
+  (request_line
+    (method)
+    (url)))
+
+==============================
+method only (mid-typing)
+==============================
+GET
+---
+(source_file
+  (request_line
+    (method)))
+
+==============================
+unknown uppercase method is lenient
+==============================
+FOO https://x.com
+---
+(source_file
+  (request_line
+    (method)
+    (url)))
+
+==============================
+lowercase method does not parse
+:error
+==============================
+get /x
+---
+
+==============================
+header missing colon recovers
+==============================
+GET /x
+not-a-header
+B: c
+---
+(source_file
+  (request_line
+    (method)
+    (url))
+  (header_line
+    (header_name)
+    (MISSING ":"))
+  (header_line
+    (header_name)
+    (header_value)))
+
+==============================
+empty input
+==============================
+---
+(source_file)

@@ -134,7 +134,16 @@ let () =
       (member "tokenTypes")
   in
   check "vanilla legend downgrades to fallbacks"
-    (legend_types = Some (`List [ `String "property"; `String "variable" ]));
+    (legend_types
+    = Some
+        (`List
+           [
+             `String "keyword";
+             `String "parameter";
+             `String "property";
+             `String "string";
+             `String "variable";
+           ]));
   send (notif "initialized" ~params:(`Assoc []));
 
   (* didOpen pushes diagnostics for the unknown alias *)
@@ -321,10 +330,19 @@ let () =
     | Some (`List l) -> List.map (function `Int i -> i | _ -> -1) l
     | _ -> []
   in
-  (* first token: alias declaration [req1] on line 2, char 14, length 4,
-     type httui.alias (index 0 in the sorted legend), declaration bit set *)
-  check "first token is the req1 declaration with modifier"
-    (match data2 with 2 :: 14 :: 4 :: 0 :: 1 :: _ -> true | _ -> false);
+  (* legend (sorted): httui.alias=0, httui.env_var=1, httui.ref_path=2,
+     keyword=3, parameter=4, property=5, string=6. Opening fence of req1
+     on line 2: lang [http] at char 3 (keyword), info [alias=] at char 8
+     (parameter), declaration [req1] at char 14 (httui.alias, declaration
+     bit), then [GET] on line 3 (keyword). *)
+  check "tokens start with fence lang, info, alias decl, method"
+    (match data2 with
+    | 2 :: 3 :: 4 :: 3 :: 0 (* ```http -> lang *) :: 0 :: 5 :: 6 :: 4
+      :: 0 (* alias= -> fence info *) :: 0 :: 6 :: 4 :: 0
+      :: 1 (* req1 -> alias declaration *) :: 1 :: 0 :: 3 :: 3
+      :: 0 (* GET -> method *) :: _ ->
+        true
+    | _ -> false);
   send_to c2 (req 9 "shutdown");
   let _ = recv_from c2 in
   send_to c2 (notif "exit");

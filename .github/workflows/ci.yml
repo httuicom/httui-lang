@@ -54,12 +54,16 @@ jobs:
       - name: Build bundle
         run: npm run build
 
-  tree-sitter-refs:
-    name: Tree-sitter grammar (refs)
+  tree-sitter:
+    name: Tree-sitter grammar (${{ matrix.grammar }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        grammar: [tree-sitter-httui-refs, tree-sitter-httui-http]
     defaults:
       run:
-        working-directory: lib/grammars/tree-sitter-httui-refs
+        working-directory: lib/grammars/${{ matrix.grammar }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -126,5 +130,5 @@ jobs:
               echo "::error::commit $SHA: subject does not match conventional commits"
               FAIL=1
             fi
-          done < <(git log --no-merges --format='%h %s' ${BASE_SHA}..HEAD)
+          done < <(git log --no-merges --format='%h %s' "${BASE_SHA}..HEAD")
           exit $FAIL
