@@ -1,0 +1,48 @@
+{
+  "name": "@httui/lezer-http",
+  "version": "0.1.0",
+  "description": "Lezer grammar for the httui HTTP fence dialect",
+  "type": "module",
+  "main": "dist/index.cjs",
+  "module": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "src/http.grammar"
+  ],
+  "scripts": {
+    "build:parser": "lezer-generator src/http.grammar -o src/parser.js",
+    "build:bundle": "rollup -c",
+    "build": "npm run build:parser && npm run build:bundle",
+    "test": "npm run build:parser && vitest run",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "lezer",
+    "codemirror",
+    "httui",
+    "grammar"
+  ],
+  "license": "MIT",
+  "author": "gandarfh <jgdsantosferreira@gmail.com>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/httuicom/httui-lang.git",
+    "directory": "grammars-lezer/lezer-httui-http"
+  },
+  "dependencies": {
+    "@lezer/common": "^1.2.3",
+    "@lezer/highlight": "^1.2.1",
+    "@lezer/lr": "^1.4.2"
+  },
+  "devDependencies": {
+    "@lezer/generator": "^1.7.2",
+    "@rollup/plugin-node-resolve": "^15.3.1",
+    "@rollup/plugin-typescript": "^12.1.4",
+    "rollup": "^4.32.0",
+    "rollup-plugin-dts": "^6.2.3",
+    "tslib": "^2.8.1",
+    "typescript": "^5.7.3",
+    "vitest": "^4.0.0"
+  }
+}

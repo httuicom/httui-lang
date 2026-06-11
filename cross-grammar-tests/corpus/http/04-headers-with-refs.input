@@ -1,0 +1,3 @@
+POST https://api.example.com/users
+Authorization: Bearer {{TOKEN}}
+Origin: https://app.example.com

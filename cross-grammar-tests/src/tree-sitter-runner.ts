@@ -3,10 +3,9 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { mapTreeSitter, type CanonicalNode } from "./normalize.js";
+import type { GrammarConfig, CanonicalNode } from "./normalize.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const GRAMMAR_DIR = resolve(HERE, "../../lib/grammars/tree-sitter-httui-refs");
 
 const NODE_RE =
   /^\s*\(([A-Za-z_][\w]*)\s+\[(\d+),\s*(\d+)\]\s+-\s+\[(\d+),\s*(\d+)\]/;
@@ -22,19 +21,23 @@ function rowColToOffset(input: string, row: number, col: number): number {
 }
 
 /**
- * Parses input with the tree-sitter grammar and returns a normalized
- * stream. The grammar's parser is loaded by shelling out to the
- * `tree-sitter` CLI, which already builds and caches parser.c on demand
- * — avoids depending on native node bindings or a WASM build step.
+ * Parses input with the grammar's canonical tree-sitter parser and
+ * returns a normalized stream. The parser is loaded by shelling out to
+ * the `tree-sitter` CLI, which already builds and caches parser.c on
+ * demand — avoids depending on native node bindings or a WASM build step.
  */
-export function parseTreeSitter(input: string): CanonicalNode[] {
+export function parseTreeSitter(
+  grammar: GrammarConfig,
+  input: string,
+): CanonicalNode[] {
+  const grammarDir = resolve(HERE, grammar.grammarDir);
   const tmp = mkdtempSync(join(tmpdir(), "httui-cross-"));
   const file = join(tmp, "input.txt");
   writeFileSync(file, input, "utf8");
   let stdout: string;
   try {
     stdout = execFileSync("tree-sitter", ["parse", file], {
-      cwd: GRAMMAR_DIR,
+      cwd: grammarDir,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -61,7 +64,7 @@ export function parseTreeSitter(input: string): CanonicalNode[] {
     const startCol = Number(m[3]);
     const endRow = Number(m[4]);
     const endCol = Number(m[5]);
-    const kind = mapTreeSitter(name);
+    const kind = grammar.mapTreeSitter(name);
     if (kind === null) continue;
     out.push({
       kind,

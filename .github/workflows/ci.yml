@@ -34,19 +34,23 @@ jobs:
           opam install --yes ocamlformat.0.28.1
           opam exec -- dune build @fmt
 
-  lezer-refs:
-    name: Lezer grammar (refs)
+  lezer:
+    name: Lezer grammar (${{ matrix.package }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        package: [lezer-httui-refs, lezer-httui-http]
     defaults:
       run:
-        working-directory: grammars-lezer/lezer-httui-refs
+        working-directory: grammars-lezer/${{ matrix.package }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
           cache: npm
-          cache-dependency-path: grammars-lezer/lezer-httui-refs/package-lock.json
+          cache-dependency-path: grammars-lezer/${{ matrix.package }}/package-lock.json
       - name: Install dependencies
         run: npm ci
       - name: Test (also generates parser)
@@ -83,7 +87,7 @@ jobs:
         run: npx tree-sitter test
 
   cross-grammar:
-    name: Cross-grammar sync (refs)
+    name: Cross-grammar sync
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -92,11 +96,12 @@ jobs:
           node-version: "22"
       - name: Install tree-sitter CLI
         run: npm install -g tree-sitter-cli
-      - name: Build Lezer grammar package
-        working-directory: grammars-lezer/lezer-httui-refs
+      - name: Build Lezer grammar packages
+        working-directory: grammars-lezer
         run: |
-          npm ci
-          npm run build
+          for pkg in lezer-httui-refs lezer-httui-http; do
+            (cd "$pkg" && npm ci && npm run build)
+          done
       - name: Run sync tests
         working-directory: cross-grammar-tests
         run: |

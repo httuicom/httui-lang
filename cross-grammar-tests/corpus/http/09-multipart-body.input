@@ -1,0 +1,6 @@
+POST /upload
+Content-Type: multipart/form-data
+
+name=alice
+avatar=< /tmp/a.png
+# disabled=row

@@ -1,0 +1,66 @@
+// Lezer grammar for the httui HTTP fence dialect.
+//
+// Parses the body of ```http fenced blocks for CodeMirror 6 first-paint
+// highlighting: request line (method + url), query continuation lines,
+// headers, the `# desc:` / disabled-row / comment family, and an opaque
+// body after the first blank line.
+//
+// Methods are specialized tokens (GET, POST, ...) so the editor can
+// color each method differently; unknown uppercase runs stay a generic
+// Method node — validation is semantic, never a parse error.
+//
+// `{{...}}` references are plain text here; the refs grammar overlays
+// them in every consumer.
+//
+// Sync contract: tree-sitter-httui-http (canonical, in lib/grammars/)
+// must emit equivalent token kinds for the same inputs. Cross-grammar
+// corpus tests live in cross-grammar-tests/ and run in CI.
+
+@top File {
+  (CommentLine | DescLine | newline)*
+  (RequestLine middleLine* (blank Body?)?)?
+}
+
+middleLine {
+  newline
+  (QueryLine | HeaderLine | DescLine | CommentLine |
+   DisabledQueryLine | DisabledHeaderLine)?
+}
+
+RequestLine {
+  (method<"GET"> | method<"POST"> | method<"PUT"> | method<"PATCH"> |
+   method<"DELETE"> | method<"HEAD"> | method<"OPTIONS"> | Method)
+  Url?
+}
+
+method<term> { @specialize[@name={term}]<Method, term> }
+
+HeaderLine { HeaderName Colon HeaderValue? }
+
+Body { (BodyLine | newline)+ }
+
+@skip { space }
+
+@tokens {
+  space { $[ \t]+ }
+  newline { "\r"? "\n" }
+  blank { "\r"? "\n" (space? "\r"? "\n")+ }
+  Method { $[A-Z]+ }
+  Url { ![ \t\r\n] ![\r\n]* }
+  QueryLine { $[?&] ![\r\n]* }
+  HeaderName { ![:?&# \t\r\n] ![:\r\n]* }
+  Colon { ":" }
+  HeaderValue { ![\r\n]+ }
+  DescLine { "# desc: " ![\r\n]* }
+  DisabledQueryLine { "# " $[?&] ![\r\n]* }
+  DisabledHeaderLine { "# " ![:?&\r\n] ![:\r\n]* ":" ![\r\n]* }
+  CommentLine { "#" ![\r\n]* }
+  BodyLine { ![\r\n]+ }
+  @precedence { blank, newline }
+  @precedence { DescLine, DisabledQueryLine, DisabledHeaderLine, CommentLine }
+  // HeaderValue and BodyLine swallow leading whitespace instead of
+  // letting the skip token eat it — the canonical tree-sitter grammar
+  // produces those exact spans and the sync contract compares offsets.
+  @precedence { HeaderValue, space }
+  @precedence { BodyLine, space }
+}
