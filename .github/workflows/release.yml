@@ -70,11 +70,22 @@ jobs:
           TRIPLE: ${{ matrix.triple }}
         run: |
           SUFFIX=""
-          [[ "$TRIPLE" == *windows* ]] && SUFFIX=".exe"
+          if [[ "$TRIPLE" == *windows* ]]; then
+            SUFFIX=".exe"
+            # exit 127 here means the Windows loader could not find a
+            # DLL; cygcheck names which ones the binary links against.
+            cygcheck "./httui-lsp-$TRIPLE$SUFFIX" || true
+          fi
           BODY='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"processId":null,"rootUri":null,"capabilities":{}}}'
           RESPONSE="$(printf "Content-Length: %d\r\n\r\n%s" "${#BODY}" "$BODY" \
             | "./httui-lsp-$TRIPLE$SUFFIX" || echo "SERVER_EXIT_$?")"
           echo "response: ${RESPONSE:0:300}"
+          if [[ "$RESPONSE" == SERVER_EXIT_* ]]; then
+            echo "retrying inside the opam environment:"
+            printf "Content-Length: %d\r\n\r\n%s" "${#BODY}" "$BODY" \
+              | opam exec -- "./httui-lsp-$TRIPLE$SUFFIX" | head -c 300 || true
+            echo
+          fi
           grep -q '"hoverProvider":true' <<<"$RESPONSE"
 
       - uses: actions/upload-artifact@v4
