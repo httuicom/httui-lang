@@ -78,6 +78,9 @@ let offset_of_position text (pos : T.Position.t) =
 let shapes_for_uri uri =
   Schema_store.shapes_for ~file_path:(T.DocumentUri.to_path uri)
 
+let values_for_uri uri =
+  Result_store.values_for ~file_path:(T.DocumentUri.to_path uri)
+
 let publish_diagnostics uri text =
   let blocks = Httui_lang.Fence_scanner.scan text in
   let diagnostics =
@@ -209,6 +212,7 @@ let on_hover (r : Jsonrpc.Request.t) =
       match
         Httui_lang.Analyze.hover_at ~env_keys:(Env_store.keys ())
           ~shapes:(shapes_for_uri p.textDocument.uri)
+          ~values:(values_for_uri p.textDocument.uri)
           blocks ~offset
       with
       | None -> respond r.id `Null

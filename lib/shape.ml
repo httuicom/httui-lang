@@ -64,6 +64,14 @@ let rec walk shape ~db ~db_view i = function
       | Array_ None -> Opaque
       | Scalar _ ->
           Not_object { index = i; segment = seg; parent = type_name shape }
+      | Object_ fields when db_view && is_index seg -> (
+          (* db view numeric shortcut: [response.N] is [results[N]] *)
+          match List.assoc_opt "results" fields with
+          | Some (Array_ (Some el)) -> walk el ~db ~db_view:false (i + 1) rest
+          | Some (Array_ None) -> Opaque
+          | _ ->
+              Missing
+                { index = i; segment = seg; available = List.map fst fields })
       | Object_ fields -> (
           let next_db_view = db && i = 0 && seg = "response" in
           match List.assoc_opt seg fields with

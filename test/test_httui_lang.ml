@@ -458,6 +458,73 @@ let () =
          && String.sub prev_doc t.t_start (t.t_stop - t.t_start) = "$prev")
        (Httui_lang.Semantic_tokens.of_blocks prev_blocks));
 
+  (* --- value previews --- *)
+  let module V = Httui_lang.Json_value in
+  let resp_v =
+    V.Object_
+      [
+        ( "body",
+          V.Object_
+            [
+              ("id", V.Number "7");
+              ("tags", V.Array_ [ V.String "a"; V.String "b" ]);
+            ] );
+      ]
+  in
+  check "value at a path"
+    (V.resolve_ref ~response:resp_v ~status:"success" ~db:false
+       [ "response"; "body"; "id" ]
+    = Some (V.Number "7"));
+  check "value of status"
+    (V.resolve_ref ~response:resp_v ~status:"success" ~db:false [ "status" ]
+    = Some (V.String "success"));
+  check "value numeric segment indexes the real array"
+    (V.resolve_ref ~response:resp_v ~status:"s" ~db:false
+       [ "response"; "body"; "tags"; "1" ]
+    = Some (V.String "b"));
+  check "value navigation is strict"
+    (V.resolve_ref ~response:resp_v ~status:"s" ~db:false
+       [ "response"; "body"; "tags"; "x" ]
+    = None);
+  check "preview truncates long values"
+    ( V.preview ~max_len:10 (V.String "0123456789012345xyz") |> fun s ->
+      String.length s <= 16 && has_sub s "\xe2\x80\xa6" );
+  check "db view value reads the first-row column"
+    (V.resolve_prev
+       ~response:
+         (V.Object_
+            [
+              ( "results",
+                V.Array_
+                  [
+                    V.Object_
+                      [
+                        ("rows", V.Array_ [ V.Object_ [ ("id", V.Number "1") ] ]);
+                      ];
+                  ] );
+            ])
+       ~db:true [ "id" ]
+    = Some (V.Number "1"));
+  check "db view shape accepts the numeric results shortcut"
+    (S.resolve_ref ~response:db_shape ~db:true
+       [ "response"; "0"; "rows"; "0"; "id" ]
+    = S.Found (S.Scalar "number"));
+  let vals = [ ("req1", (resp_v, "success")) ] in
+  check "hover appends the last value"
+    (match
+       Httui_lang.Analyze.hover_at ~shapes ~values:vals typed_blocks
+         ~offset:(find_sub "id}}&b")
+     with
+    | Some h -> has_sub h.markdown "last value: `7`"
+    | None -> false);
+  check "hover on the alias name shows the full-path value"
+    (match
+       Httui_lang.Analyze.hover_at ~shapes ~values:vals typed_blocks
+         ~offset:(find_sub "req1.response.body.id")
+     with
+    | Some h -> has_sub h.markdown "last value: `7`"
+    | None -> false);
+
   (* --- positions (UTF-16 with multibyte) --- *)
   let mdoc = "caf\xc3\xa9 {{x}}\n" in
   let p = Httui_lang.Doc_position.of_offset mdoc 5 in

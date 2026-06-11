@@ -358,6 +358,10 @@ let () =
           "CREATE TABLE block_schema_cache (file_path TEXT NOT NULL, alias \
            TEXT NOT NULL, shape TEXT NOT NULL, cache_schema_version INTEGER \
            NOT NULL, updated_at TEXT, PRIMARY KEY (file_path, alias))";
+        exec
+          "CREATE TABLE block_results (id INTEGER PRIMARY KEY AUTOINCREMENT, \
+           file_path TEXT, block_hash TEXT, alias TEXT, status TEXT, response \
+           TEXT, elapsed_ms INTEGER, total_rows INTEGER, executed_at TEXT)";
         (path, exec)
   in
   let c3 = spawn_server ~args:[ "--db"; db_path ] () in
@@ -502,6 +506,29 @@ let () =
          (member "value")
      with
     | Some (`String v) -> contains v "number"
+    | _ -> false);
+
+  (* a successful run lands a response row; hover then previews the value *)
+  db_exec
+    "INSERT INTO block_results (file_path, block_hash, alias, status, \
+     response) VALUES ('t.md', 'h1', 'req1', 'success', \
+     '{\"body\":{\"id\":42,\"name\":\"ana\"}}')";
+  send_to c3
+    (req 5 "textDocument/hover"
+       ~params:
+         (`Assoc
+            [
+              ("textDocument", text_doc);
+              ("position", `Assoc [ ("line", `Int 7); ("character", `Int 39) ]);
+            ]));
+  let hov5 = recv_from c3 in
+  check "hover previews the last value"
+    (match
+       Option.bind
+         (Option.bind (member "result" hov5) (member "contents"))
+         (member "value")
+     with
+    | Some (`String v) -> contains v "last value: `42`"
     | _ -> false);
 
   send_to c3 (req 9 "shutdown");
