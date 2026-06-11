@@ -61,6 +61,17 @@ jobs:
           # GNU strip corrupts MSVC-linked PE binaries — Windows ships
           # unstripped.
           [[ "$TRIPLE" == *windows* ]] || strip "httui-lsp-$TRIPLE$SUFFIX"
+          if [[ "$TRIPLE" == *windows* ]]; then
+            # sqlite3 is linked dynamically; the Windows loader resolves
+            # DLLs from the exe's directory, so the dll ships alongside
+            # the binary (release asset + desktop bundle).
+            DLL="$(find /usr -name 'libsqlite3-0.dll' 2>/dev/null | head -1)"
+            if [[ -z "$DLL" ]]; then
+              echo "error: libsqlite3-0.dll not found in the toolchain sysroot" >&2
+              exit 1
+            fi
+            cp "$DLL" libsqlite3-0.dll
+          fi
 
       # The server answers initialize and exits cleanly on stdin EOF; a
       # binary that fails to handshake must never reach the release.
@@ -91,7 +102,11 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: httui-lsp-${{ matrix.triple }}
-          path: httui-lsp-${{ matrix.triple }}*
+          # libsqlite3-0.dll only exists on the Windows runner; the
+          # unmatched pattern elsewhere is a warning, not a failure.
+          path: |
+            httui-lsp-${{ matrix.triple }}*
+            libsqlite3-0.dll
           if-no-files-found: error
 
   # CM6 first-paint grammar, consumed by the desktop as a pinned
@@ -140,7 +155,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" assets/httui-lsp-* assets/*.tgz \
+          gh release create "$GITHUB_REF_NAME" assets/httui-lsp-* assets/*.dll assets/*.tgz \
             --repo "$GITHUB_REPOSITORY" \
             --title "httui-lsp $GITHUB_REF_NAME" \
             --generate-notes
