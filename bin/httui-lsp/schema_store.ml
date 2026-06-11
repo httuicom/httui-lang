@@ -28,6 +28,9 @@ let rec shape_of_json : Yojson.Safe.t -> Httui_lang.Shape.t = function
    absolute path ends in "/" + the stored relative path. The filter runs
    client-side: the table holds one small row per executed alias. *)
 let row_matches ~file_path stored =
+  (* document URIs yield backslash paths on Windows *)
+  let normalize p = String.map (fun c -> if c = '\\' then '/' else c) p in
+  let file_path = normalize file_path and stored = normalize stored in
   stored = file_path || String.ends_with ~suffix:("/" ^ stored) file_path
 
 (** [(alias, shape)] pairs inferred for the document at absolute path
