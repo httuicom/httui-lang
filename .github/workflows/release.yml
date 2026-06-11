@@ -48,8 +48,10 @@ jobs:
       - name: Stage binary
         run: |
           cp _build/default/bin/httui-lsp/httui_lsp.exe "httui-lsp-${{ matrix.triple }}"
+          # dune outputs are read-only and cp preserves the mode; strip
+          # needs a writable file.
+          chmod 755 "httui-lsp-${{ matrix.triple }}"
           strip "httui-lsp-${{ matrix.triple }}"
-          chmod +x "httui-lsp-${{ matrix.triple }}"
 
       # The server answers initialize and exits cleanly on stdin EOF; a
       # binary that fails to handshake must never reach the release.
