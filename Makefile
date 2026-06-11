@@ -4,6 +4,7 @@
 
 LEZER_REFS_DIR := grammars-lezer/lezer-httui-refs
 TS_REFS_DIR    := lib/grammars/tree-sitter-httui-refs
+LEZER_HTTP_DIR := grammars-lezer/lezer-httui-http
 TS_HTTP_DIR    := lib/grammars/tree-sitter-httui-http
 LSP_DIR        := bin/httui-lsp
 
@@ -19,6 +20,7 @@ help: ## Show this help
 install: ## Install all dependencies
 	opam install --yes --deps-only --with-test .
 	cd $(LEZER_REFS_DIR) && npm install
+	cd $(LEZER_HTTP_DIR) && npm install
 	cd $(TS_REFS_DIR) && npm install
 	cd $(TS_HTTP_DIR) && npm install
 
@@ -32,6 +34,7 @@ build-ocaml: ## Build OCaml library + LSP binary
 
 build-grammars: ## Build all grammars
 	cd $(LEZER_REFS_DIR) && npm run build
+	cd $(LEZER_HTTP_DIR) && npm run build
 	cd $(TS_REFS_DIR) && npx tree-sitter generate
 	cd $(TS_HTTP_DIR) && npx tree-sitter generate
 
@@ -45,6 +48,7 @@ test-ocaml: ## Run OCaml tests (library + LSP binary)
 
 test-grammars: ## Run grammar corpus tests
 	cd $(LEZER_REFS_DIR) && npm test
+	cd $(LEZER_HTTP_DIR) && npm test
 	cd $(TS_REFS_DIR) && npx tree-sitter test
 	cd $(TS_HTTP_DIR) && npx tree-sitter test
 
@@ -59,14 +63,18 @@ lint-ocaml: ## OCaml formatter check
 lint-js: ## JS/TS lint via eslint + prettier
 	cd $(LEZER_REFS_DIR) && npx eslint --max-warnings 0 src test
 	cd $(LEZER_REFS_DIR) && npx prettier --check src test
+	cd $(LEZER_HTTP_DIR) && npx eslint --max-warnings 0 src test
+	cd $(LEZER_HTTP_DIR) && npx prettier --check src test
 
 regenerate-grammars: ## Regenerate parser artifacts from grammar definitions
 	cd $(LEZER_REFS_DIR) && npm run build:parser
+	cd $(LEZER_HTTP_DIR) && npm run build:parser
 	cd $(TS_REFS_DIR) && npx tree-sitter generate
 	cd $(TS_HTTP_DIR) && npx tree-sitter generate
 
 audit: ## Run security audits across ecosystems
 	cd $(LEZER_REFS_DIR) && npm audit --audit-level=moderate
+	cd $(LEZER_HTTP_DIR) && npm audit --audit-level=moderate
 	cd $(TS_REFS_DIR) && npm audit --audit-level=moderate
 	cd $(TS_HTTP_DIR) && npm audit --audit-level=moderate
 
@@ -77,5 +85,6 @@ clean-ocaml: ## Clean OCaml build outputs
 
 clean-grammars: ## Clean grammar build outputs
 	rm -rf $(LEZER_REFS_DIR)/dist $(LEZER_REFS_DIR)/src/parser.js $(LEZER_REFS_DIR)/src/parser.terms.js
+	rm -rf $(LEZER_HTTP_DIR)/dist $(LEZER_HTTP_DIR)/src/parser.js $(LEZER_HTTP_DIR)/src/parser.terms.js
 	rm -rf $(TS_REFS_DIR)/build
 	rm -rf $(TS_HTTP_DIR)/build

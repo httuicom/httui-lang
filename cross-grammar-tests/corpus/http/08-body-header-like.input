@@ -1,0 +1,8 @@
+POST /x
+Content-Type: application/json
+
+{
+  "note": "b: c",
+
+  "n": 1
+}

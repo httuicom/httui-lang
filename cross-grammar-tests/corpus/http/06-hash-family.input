@@ -1,0 +1,8 @@
+GET /x
+# desc: token for staging
+Authorization: Bearer abc
+# X-Disabled: value
+# &limit=10
+# free-form note
+#bare
+#

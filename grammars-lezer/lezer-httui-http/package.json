@@ -1,7 +1,7 @@
 {
-  "name": "@httui/lezer-refs",
+  "name": "@httui/lezer-http",
   "version": "0.1.0",
-  "description": "Lezer grammar for httui reference syntax ({{alias.path}})",
+  "description": "Lezer grammar for the httui HTTP fence dialect",
   "type": "module",
   "main": "dist/index.cjs",
   "module": "dist/index.js",
@@ -15,10 +15,10 @@
   },
   "files": [
     "dist",
-    "src/refs.grammar"
+    "src/http.grammar"
   ],
   "scripts": {
-    "build:parser": "lezer-generator src/refs.grammar -o src/parser.js",
+    "build:parser": "lezer-generator src/http.grammar -o src/parser.js",
     "build:bundle": "rollup -c",
     "build": "npm run build:parser && npm run build:bundle",
     "test": "npm run build:parser && vitest run",
@@ -35,10 +35,11 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/httuicom/httui-lang.git",
-    "directory": "grammars-lezer/lezer-httui-refs"
+    "directory": "grammars-lezer/lezer-httui-http"
   },
   "dependencies": {
     "@lezer/common": "^1.2.3",
+    "@lezer/highlight": "^1.2.1",
     "@lezer/lr": "^1.4.2"
   },
   "devDependencies": {

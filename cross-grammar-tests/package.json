@@ -2,14 +2,15 @@
   "name": "@httui/cross-grammar-tests",
   "version": "0.1.0",
   "private": true,
-  "description": "Asserts the Lezer and tree-sitter refs grammars agree on the same inputs",
+  "description": "Asserts the Lezer and tree-sitter grammars agree on the same inputs",
   "type": "module",
   "scripts": {
     "test": "vitest run"
   },
   "license": "MIT",
   "dependencies": {
-    "@httui/lezer-refs": "file:../grammars-lezer/lezer-httui-refs"
+    "@httui/lezer-refs": "file:../grammars-lezer/lezer-httui-refs",
+    "@httui/lezer-http": "file:../grammars-lezer/lezer-httui-http"
   },
   "devDependencies": {
     "typescript": "^5.7.3",
