@@ -37,15 +37,19 @@ let of_blocks blocks =
            let refs =
              Refs.of_block b
              |> List.concat_map (fun (r : Refs.occurrence) ->
-                 let known = List.mem_assoc r.name scope in
+                 let is_prev = r.name = Analyze.prev_name in
+                 let known =
+                   if is_prev then Analyze.prev_decl blocks ~index:i <> None
+                   else List.mem_assoc r.name scope
+                 in
                  let name_kind =
-                   if r.has_path || known then Alias else Env_var
+                   if is_prev || r.has_path || known then Alias else Env_var
                  in
                  {
                    t_start = r.name_start;
                    t_stop = r.name_stop;
                    kind = name_kind;
-                   unresolved = r.has_path && not known;
+                   unresolved = (is_prev || r.has_path) && not known;
                    declaration = false;
                  }
                  :: List.map

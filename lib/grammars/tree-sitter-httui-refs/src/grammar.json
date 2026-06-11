@@ -47,8 +47,17 @@
       "type": "SEQ",
       "members": [
         {
-          "type": "SYMBOL",
-          "name": "identifier"
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "SYMBOL",
+              "name": "identifier"
+            },
+            {
+              "type": "SYMBOL",
+              "name": "prev"
+            }
+          ]
         },
         {
           "type": "CHOICE",
@@ -84,8 +93,17 @@
       "type": "SEQ",
       "members": [
         {
-          "type": "SYMBOL",
-          "name": "identifier"
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "SYMBOL",
+              "name": "identifier"
+            },
+            {
+              "type": "SYMBOL",
+              "name": "number"
+            }
+          ]
         },
         {
           "type": "CHOICE",
@@ -100,6 +118,10 @@
           ]
         }
       ]
+    },
+    "prev": {
+      "type": "STRING",
+      "value": "$prev"
     },
     "index_access": {
       "type": "SEQ",

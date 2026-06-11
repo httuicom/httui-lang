@@ -27,6 +27,17 @@ let aliases_above blocks ~index =
       match b.alias with Some a -> Some (a, b) | None -> None)
 
 let is_db_lang lang = String.length lang > 3 && String.sub lang 0 3 = "db-"
+let prev_name = "$prev"
+
+(* mirror of the runtime [$prev]: the closest block above that the
+   collector surfaces — executable AND aliased *)
+let prev_decl blocks ~index =
+  List.filteri (fun j _ -> j < index) blocks
+  |> List.filter (fun (b : Block.t) -> Block.is_executable b && b.alias <> None)
+  |> List.rev
+  |> function
+  | [] -> None
+  | b :: _ -> Some b
 
 (* (shape, declared-by-a-db-block) for [name], when both the declaration
    and an inferred shape exist *)
@@ -34,6 +45,37 @@ let shape_for ~shapes ~scope name =
   match (List.assoc_opt name shapes, List.assoc_opt name scope) with
   | Some shape, Some (decl : Block.t) -> Some (shape, is_db_lang decl.lang)
   | _ -> None
+
+type typed_ctx = {
+  resolve : string list -> Shape.resolution;
+  fields : string list -> (string * Shape.t) list option;
+}
+
+(* typed resolvers for a ref head: named refs navigate the envelope,
+   [$prev] navigates the previous block's response directly *)
+let typed_ctx ~shapes ~blocks ~index ~scope name =
+  if name = prev_name then
+    match prev_decl blocks ~index with
+    | Some (decl : Block.t) -> (
+        match Option.bind decl.alias (fun a -> List.assoc_opt a shapes) with
+        | Some shape ->
+            let db = is_db_lang decl.lang in
+            Some
+              {
+                resolve = Shape.resolve_prev ~response:shape ~db;
+                fields = Shape.fields_at_prev ~response:shape ~db;
+              }
+        | None -> None)
+    | None -> None
+  else
+    match shape_for ~shapes ~scope name with
+    | Some (shape, db) ->
+        Some
+          {
+            resolve = Shape.resolve_ref ~response:shape ~db;
+            fields = Shape.fields_at ~response:shape ~db;
+          }
+    | None -> None
 
 (* path segment texts paired with their doc-absolute ranges *)
 let segments_of (b : Block.t) (r : Refs.occurrence) =
@@ -46,8 +88,8 @@ let path_until segs ~index name =
   String.concat "."
     (name :: (List.filteri (fun j _ -> j < index) segs |> List.map fst))
 
-let field_diagnostic ~shape ~db (r : Refs.occurrence) segs =
-  match Shape.resolve_ref ~response:shape ~db (List.map fst segs) with
+let field_diagnostic ~resolve (r : Refs.occurrence) segs =
+  match (resolve (List.map fst segs) : Shape.resolution) with
   | Found _ | Opaque -> None
   | Missing { index; segment; available } ->
       let start_, stop_ = snd (List.nth segs index) in
@@ -91,7 +133,22 @@ let diagnostics ?(shapes = []) blocks =
            let scope = aliases_above blocks ~index:i in
            Refs.of_block b
            |> List.filter_map (fun (r : Refs.occurrence) ->
-               if not r.has_path then None
+               let typo_check () =
+                 Option.bind (typed_ctx ~shapes ~blocks ~index:i ~scope r.name)
+                   (fun ctx ->
+                     field_diagnostic ~resolve:ctx.resolve r (segments_of b r))
+               in
+               if r.name = prev_name then
+                 if prev_decl blocks ~index:i = None then
+                   Some
+                     {
+                       start_ = r.name_start;
+                       stop_ = r.name_stop;
+                       message = "No previous block to reference with {{$prev}}";
+                       severity = Error;
+                     }
+                 else typo_check ()
+               else if not r.has_path then None
                else if not (List.mem_assoc r.name scope) then
                  Some
                    {
@@ -104,11 +161,7 @@ let diagnostics ?(shapes = []) blocks =
                          r.name r.name;
                      severity = Error;
                    }
-               else
-                 match shape_for ~shapes ~scope r.name with
-                 | None -> None
-                 | Some (shape, db) ->
-                     field_diagnostic ~shape ~db r (segments_of b r)))
+               else typo_check ()))
        blocks)
 
 let block_index_at blocks ~offset =
@@ -130,14 +183,14 @@ let fields_markdown fields =
 
 (* hover for the path segment under the cursor, typed against the
    alias's inferred shape *)
-let segment_hover ~shape ~db (r : Refs.occurrence) segs ~offset =
+let segment_hover ~resolve (r : Refs.occurrence) segs ~offset =
   Option.bind
     (List.find_index (fun (_, (s, e)) -> offset >= s && offset < e) segs)
     (fun k ->
       let upto = List.filteri (fun j _ -> j <= k) segs in
       let h_start, h_stop = snd (List.nth segs k) in
       let path = path_until segs ~index:(k + 1) r.name in
-      match Shape.resolve_ref ~response:shape ~db (List.map fst upto) with
+      match (resolve (List.map fst upto) : Shape.resolution) with
       | Found s ->
           let body =
             match s with
@@ -180,13 +233,28 @@ let hover_at ?(env_keys = []) ?(shapes = []) blocks ~offset =
       |> Option.map (fun (r : Refs.occurrence) ->
           let scope = aliases_above blocks ~index:i in
           let typed_hover =
-            match shape_for ~shapes ~scope r.name with
-            | Some (shape, db) when r.has_path ->
-                segment_hover ~shape ~db r (segments_of b r) ~offset
+            match typed_ctx ~shapes ~blocks ~index:i ~scope r.name with
+            | Some ctx when r.has_path ->
+                segment_hover ~resolve:ctx.resolve r (segments_of b r) ~offset
             | _ -> None
           in
           match typed_hover with
           | Some h -> h
+          | None when r.name = prev_name ->
+              let markdown =
+                match prev_decl blocks ~index:i with
+                | Some (decl : Block.t) ->
+                    Printf.sprintf
+                      "**%s** — previous block (alias '%s', line %d)\n\n\
+                       `{{%s}}`"
+                      prev_name
+                      (Option.value decl.alias ~default:"")
+                      (decl.open_line + 1) r.text
+                | None ->
+                    Printf.sprintf "**%s** — no previous block to reference"
+                      prev_name
+              in
+              { h_start = r.ref_start; h_stop = r.ref_stop; markdown }
           | None ->
               let markdown =
                 match
@@ -234,7 +302,7 @@ let parse_path_prefix typed =
     (c >= 'a' && c <= 'z')
     || (c >= 'A' && c <= 'Z')
     || (c >= '0' && c <= '9')
-    || c = '_' || c = '.' || c = '[' || c = ']'
+    || c = '_' || c = '.' || c = '[' || c = ']' || c = '$'
   in
   if not (String.for_all valid typed) then None
   else
@@ -279,10 +347,10 @@ let completion_at ?(env_keys = []) ?(shapes = []) doc blocks ~offset =
           let typed = String.sub doc p (offset - p) in
           match parse_path_prefix typed with
           | Some (alias, segments) -> (
-              match shape_for ~shapes ~scope alias with
+              match typed_ctx ~shapes ~blocks ~index:i ~scope alias with
               | None -> []
-              | Some (shape, db) -> (
-                  match Shape.fields_at ~response:shape ~db segments with
+              | Some ctx -> (
+                  match ctx.fields segments with
                   | None -> []
                   | Some fields ->
                       List.map

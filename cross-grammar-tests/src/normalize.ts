@@ -14,6 +14,7 @@ export type CanonicalKind =
   | "path_segment"
   | "index_access"
   | "identifier"
+  | "prev"
   | "number"
   | "text";
 
@@ -30,6 +31,7 @@ const LEZER_TO_CANONICAL: Record<string, CanonicalKind | null> = {
   PathSegment: "path_segment",
   IndexAccess: "index_access",
   Identifier: "identifier",
+  Prev: "prev",
   Number: "number",
   Text: "text",
   File: null,
@@ -48,6 +50,7 @@ const TREE_SITTER_TO_CANONICAL: Record<string, CanonicalKind | null> = {
   path_segment: "path_segment",
   index_access: "index_access",
   identifier: "identifier",
+  prev: "prev",
   number: "number",
   text: "text",
   source_file: null,

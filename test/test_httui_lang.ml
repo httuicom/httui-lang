@@ -357,6 +357,107 @@ let () =
   check "path completion without a shape is empty"
     (Httui_lang.Analyze.completion_at compl_doc compl_blocks ~offset:dot = []);
 
+  (* --- $prev and numeric segments --- *)
+  check "numeric segment consumes one array level"
+    (S.resolve_ref ~response:user_shape ~db:false
+       [ "response"; "body"; "items"; "0"; "sku" ]
+    = S.Found (S.Scalar "string"));
+  check "numeric segment into a scalar is not_object"
+    (match
+       S.resolve_ref ~response:user_shape ~db:false
+         [ "response"; "body"; "id"; "0" ]
+     with
+    | S.Not_object _ -> true
+    | _ -> false);
+  check "prev resolution roots at the response, no envelope"
+    (S.resolve_prev ~response:user_shape ~db:false [ "body"; "id" ]
+    = S.Found (S.Scalar "number"));
+  check "prev resolution arms the db view at the root"
+    (S.resolve_prev ~response:db_shape ~db:true [ "id" ]
+    = S.Found (S.Scalar "number"));
+  let prev_doc =
+    String.concat "\n"
+      [
+        "```http alias=req1";
+        "GET /u";
+        "```";
+        "";
+        "```http alias=req2";
+        "GET /x?a={{$prev.body.id}}&b={{$prev.body.nme}}";
+        "```";
+        "";
+      ]
+  in
+  let prev_blocks = Httui_lang.Fence_scanner.scan prev_doc in
+  let find_in haystack needle =
+    let n = String.length needle in
+    let rec go i =
+      if i + n > String.length haystack then failwith ("not found: " ^ needle)
+      else if String.sub haystack i n = needle then i
+      else go (i + 1)
+    in
+    go 0
+  in
+  check "prev ref parses with its segments"
+    (match Httui_lang.Refs.of_block (List.nth prev_blocks 1) with
+    | [ a; b ] ->
+        a.name = "$prev" && b.name = "$prev" && List.length a.path_segments = 2
+    | _ -> false);
+  (match Httui_lang.Analyze.diagnostics ~shapes prev_blocks with
+  | [ d ] ->
+      check "prev typo squiggle targets the bad segment"
+        (String.sub prev_doc d.start_ (d.stop_ - d.start_) = "nme"
+        && d.severity = Httui_lang.Analyze.Warning)
+  | l -> check "prev typo squiggle targets the bad segment" (List.length l = -1));
+  check "prev without a block above is an error"
+    (match
+       Httui_lang.Analyze.diagnostics
+         (Httui_lang.Fence_scanner.scan
+            "```http alias=a\nGET /{{$prev.body}}\n```\n")
+     with
+    | [ d ] -> d.severity = Httui_lang.Analyze.Error
+    | _ -> false);
+  check "prev hover on a leaf segment shows its type"
+    (match
+       Httui_lang.Analyze.hover_at ~shapes prev_blocks
+         ~offset:(find_in prev_doc "id}}&b")
+     with
+    | Some h -> has_sub h.markdown "`number`"
+    | None -> false);
+  check "prev hover on the name shows the previous block"
+    (match
+       Httui_lang.Analyze.hover_at ~shapes prev_blocks
+         ~offset:(find_in prev_doc "$prev.body.id" + 1)
+     with
+    | Some h -> has_sub h.markdown "previous block" && has_sub h.markdown "req1"
+    | None -> false);
+  let prev_compl_doc =
+    "```http alias=req1\n\
+     GET /u\n\
+     ```\n\n\
+     ```http alias=req2\n\
+     GET /x?a={{$prev.body.\n\
+     ```\n"
+  in
+  let prev_compl_blocks = Httui_lang.Fence_scanner.scan prev_compl_doc in
+  let prev_dot = find_in prev_compl_doc "$prev.body." + 11 in
+  check "prev path completion offers the response fields"
+    (Httui_lang.Analyze.completion_at ~shapes prev_compl_doc prev_compl_blocks
+       ~offset:prev_dot
+    |> List.map (fun (it : Httui_lang.Analyze.completion_item) -> it.label)
+    = [ "id"; "name"; "items"; "empty" ]);
+  check "prev is not offered in the alias list"
+    (Httui_lang.Analyze.completion_at ~shapes prev_compl_doc prev_compl_blocks
+       ~offset:(find_in prev_compl_doc "{{$prev" + 2)
+    |> List.for_all (fun (it : Httui_lang.Analyze.completion_item) ->
+        it.label <> "$prev"));
+  check "prev name paints as an alias token"
+    (List.exists
+       (fun (t : Httui_lang.Semantic_tokens.t) ->
+         t.kind = Httui_lang.Semantic_tokens.Alias
+         && String.sub prev_doc t.t_start (t.t_stop - t.t_start) = "$prev")
+       (Httui_lang.Semantic_tokens.of_blocks prev_blocks));
+
   (* --- positions (UTF-16 with multibyte) --- *)
   let mdoc = "caf\xc3\xa9 {{x}}\n" in
   let p = Httui_lang.Doc_position.of_offset mdoc 5 in
