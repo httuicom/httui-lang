@@ -1,0 +1,88 @@
+# Builds the httui-lsp binary for each supported platform and publishes
+# them as GitHub release assets named `httui-lsp-<target-triple>`.
+# Downstream bundles (the desktop app) download these by pinned version.
+#
+# macOS x86_64 builds natively on the Intel runner — OCaml does not
+# cross-compile between Apple architectures.
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build (${{ matrix.triple }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            triple: x86_64-unknown-linux-gnu
+          - os: macos-latest
+            triple: aarch64-apple-darwin
+          - os: macos-15-intel
+            triple: x86_64-apple-darwin
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ocaml/setup-ocaml@v3
+        with:
+          ocaml-compiler: "5.4"
+          dune-cache: true
+
+      - name: Install dune
+        run: opam install --yes dune
+
+      - name: Install dependencies
+        run: opam install . --deps-only
+
+      - name: Build
+        run: opam exec -- dune build --profile release
+
+      - name: Stage binary
+        run: |
+          cp _build/default/bin/httui-lsp/httui_lsp.exe "httui-lsp-${{ matrix.triple }}"
+          strip "httui-lsp-${{ matrix.triple }}"
+          chmod +x "httui-lsp-${{ matrix.triple }}"
+
+      # The server answers initialize and exits cleanly on stdin EOF; a
+      # binary that fails to handshake must never reach the release.
+      - name: Smoke test (initialize handshake)
+        run: |
+          BODY='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"processId":null,"rootUri":null,"capabilities":{}}}'
+          printf "Content-Length: %d\r\n\r\n%s" "${#BODY}" "$BODY" \
+            | "./httui-lsp-${{ matrix.triple }}" \
+            | grep -q '"hoverProvider":true'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: httui-lsp-${{ matrix.triple }}
+          path: httui-lsp-${{ matrix.triple }}
+          if-no-files-found: error
+
+  # Single publish step after all builds so the release appears once,
+  # complete — no partial asset lists from racing matrix jobs.
+  publish:
+    name: Publish release
+    needs: build
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: assets
+          merge-multiple: true
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" assets/httui-lsp-* \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "httui-lsp $GITHUB_REF_NAME" \
+            --generate-notes
