@@ -17,6 +17,7 @@
 
 ; version.ml is generated so the binary always reports the package
 ; version from dune-project.
+
 (rule
  (action
   (with-stdout-to
