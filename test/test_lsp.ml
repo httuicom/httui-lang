@@ -534,6 +534,7 @@ let () =
   send_to c3 (req 9 "shutdown");
   let _ = recv_from c3 in
   send_to c3 (notif "exit");
-  Sys.remove db_path;
+  (* best effort: on Windows the server may still hold the file *)
+  (try Sys.remove db_path with Sys_error _ -> ());
 
   if !failures > 0 then exit 1
