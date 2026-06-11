@@ -49,31 +49,46 @@ let shape_for ~shapes ~scope name =
 type typed_ctx = {
   resolve : string list -> Shape.resolution;
   fields : string list -> (string * Shape.t) list option;
+  value : string list -> Json_value.t option;
+      (** value at the path in the last response, when the caller supplied one
+          ([values] maps alias -> (response, status)) *)
 }
 
 (* typed resolvers for a ref head: named refs navigate the envelope,
    [$prev] navigates the previous block's response directly *)
-let typed_ctx ~shapes ~blocks ~index ~scope name =
+let typed_ctx ~shapes ~values ~blocks ~index ~scope name =
   if name = prev_name then
     match prev_decl blocks ~index with
     | Some (decl : Block.t) -> (
         match Option.bind decl.alias (fun a -> List.assoc_opt a shapes) with
         | Some shape ->
             let db = is_db_lang decl.lang in
+            let value segs =
+              Option.bind
+                (Option.bind decl.alias (fun a -> List.assoc_opt a values))
+                (fun (response, _status) ->
+                  Json_value.resolve_prev ~response ~db segs)
+            in
             Some
               {
                 resolve = Shape.resolve_prev ~response:shape ~db;
                 fields = Shape.fields_at_prev ~response:shape ~db;
+                value;
               }
         | None -> None)
     | None -> None
   else
     match shape_for ~shapes ~scope name with
     | Some (shape, db) ->
+        let value segs =
+          Option.bind (List.assoc_opt name values) (fun (response, status) ->
+              Json_value.resolve_ref ~response ~status ~db segs)
+        in
         Some
           {
             resolve = Shape.resolve_ref ~response:shape ~db;
             fields = Shape.fields_at ~response:shape ~db;
+            value;
           }
     | None -> None
 
@@ -134,7 +149,8 @@ let diagnostics ?(shapes = []) blocks =
            Refs.of_block b
            |> List.filter_map (fun (r : Refs.occurrence) ->
                let typo_check () =
-                 Option.bind (typed_ctx ~shapes ~blocks ~index:i ~scope r.name)
+                 Option.bind
+                   (typed_ctx ~shapes ~values:[] ~blocks ~index:i ~scope r.name)
                    (fun ctx ->
                      field_diagnostic ~resolve:ctx.resolve r (segments_of b r))
                in
@@ -183,7 +199,7 @@ let fields_markdown fields =
 
 (* hover for the path segment under the cursor, typed against the
    alias's inferred shape *)
-let segment_hover ~resolve (r : Refs.occurrence) segs ~offset =
+let segment_hover ~resolve ~value_of (r : Refs.occurrence) segs ~offset =
   Option.bind
     (List.find_index (fun (_, (s, e)) -> offset >= s && offset < e) segs)
     (fun k ->
@@ -199,11 +215,19 @@ let segment_hover ~resolve (r : Refs.occurrence) segs ~offset =
                   (fields_markdown fields)
             | s -> Printf.sprintf "**%s** — `%s`" path (Shape.type_name s)
           in
+          let value_line =
+            match value_of (List.map fst upto) with
+            | Some v ->
+                Printf.sprintf "\n\nlast value: `%s`" (Json_value.preview v)
+            | None -> ""
+          in
           Some
             {
               h_start;
               h_stop;
-              markdown = body ^ "\n\n_inferred from the last successful run_";
+              markdown =
+                body ^ value_line
+                ^ "\n\n_inferred from the last successful run_";
             }
       | Missing { segment; available; _ } ->
           let hint =
@@ -223,7 +247,7 @@ let segment_hover ~resolve (r : Refs.occurrence) segs ~offset =
 
 (* [env_keys] comes from the caller (the IO shell reads names +
    [is_secret] from storage; values never reach this layer). *)
-let hover_at ?(env_keys = []) ?(shapes = []) blocks ~offset =
+let hover_at ?(env_keys = []) ?(shapes = []) ?(values = []) blocks ~offset =
   match block_index_at blocks ~offset with
   | None -> None
   | Some (i, b) ->
@@ -232,11 +256,22 @@ let hover_at ?(env_keys = []) ?(shapes = []) blocks ~offset =
           offset >= r.ref_start && offset < r.ref_stop)
       |> Option.map (fun (r : Refs.occurrence) ->
           let scope = aliases_above blocks ~index:i in
+          let ctx = typed_ctx ~shapes ~values ~blocks ~index:i ~scope r.name in
           let typed_hover =
-            match typed_ctx ~shapes ~blocks ~index:i ~scope r.name with
+            match ctx with
             | Some ctx when r.has_path ->
-                segment_hover ~resolve:ctx.resolve r (segments_of b r) ~offset
+                segment_hover ~resolve:ctx.resolve ~value_of:ctx.value r
+                  (segments_of b r) ~offset
             | _ -> None
+          in
+          let value_line =
+            match ctx with
+            | Some c -> (
+                match c.value (List.map fst (segments_of b r)) with
+                | Some v ->
+                    Printf.sprintf "\n\nlast value: `%s`" (Json_value.preview v)
+                | None -> "")
+            | None -> ""
           in
           match typed_hover with
           | Some h -> h
@@ -254,7 +289,11 @@ let hover_at ?(env_keys = []) ?(shapes = []) blocks ~offset =
                     Printf.sprintf "**%s** — no previous block to reference"
                       prev_name
               in
-              { h_start = r.ref_start; h_stop = r.ref_stop; markdown }
+              {
+                h_start = r.ref_start;
+                h_stop = r.ref_stop;
+                markdown = markdown ^ value_line;
+              }
           | None ->
               let markdown =
                 match
@@ -284,7 +323,11 @@ let hover_at ?(env_keys = []) ?(shapes = []) blocks ~offset =
                        at run time)"
                       r.name
               in
-              { h_start = r.ref_start; h_stop = r.ref_stop; markdown })
+              {
+                h_start = r.ref_start;
+                h_stop = r.ref_stop;
+                markdown = markdown ^ value_line;
+              })
 
 type completion_item = {
   label : string;
@@ -347,7 +390,9 @@ let completion_at ?(env_keys = []) ?(shapes = []) doc blocks ~offset =
           let typed = String.sub doc p (offset - p) in
           match parse_path_prefix typed with
           | Some (alias, segments) -> (
-              match typed_ctx ~shapes ~blocks ~index:i ~scope alias with
+              match
+                typed_ctx ~shapes ~values:[] ~blocks ~index:i ~scope alias
+              with
               | None -> []
               | Some ctx -> (
                   match ctx.fields segments with
