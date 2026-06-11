@@ -14,3 +14,11 @@
   (language c)
   (names refs_stub refs_parser)
   (include_dirs grammars/tree-sitter-httui-refs/src)))
+
+; version.ml is generated so the binary always reports the package
+; version from dune-project.
+(rule
+ (action
+  (with-stdout-to
+   version.ml
+   (echo "let v = \"%{version:httui_lang}\""))))
