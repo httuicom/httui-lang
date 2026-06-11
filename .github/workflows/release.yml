@@ -33,10 +33,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Same cache rotation as ci.yml: setup-ocaml never re-saves an
+      # exact-hit cache, so a stale snapshot forces a full compiler
+      # rebuild on every run once opam-repository metadata drifts.
+      - name: Compute opam cache key
+        id: opam-cache-key
+        shell: bash
+        run: echo "prefix=v3-$(date -u +%Y-%m)-${{ hashFiles('**/*.opam') }}" >> "$GITHUB_OUTPUT"
+
       - uses: ocaml/setup-ocaml@v3
         with:
-          ocaml-compiler: "5.4"
+          ocaml-compiler: "5.4.1"
           dune-cache: true
+          cache-prefix: ${{ steps.opam-cache-key.outputs.prefix }}
 
       - name: Install dune
         run: opam install --yes dune
