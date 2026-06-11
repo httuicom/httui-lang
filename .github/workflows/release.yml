@@ -27,6 +27,8 @@ jobs:
             triple: aarch64-apple-darwin
           - os: macos-15-intel
             triple: x86_64-apple-darwin
+          - os: windows-latest
+            triple: x86_64-pc-windows-msvc
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -46,26 +48,36 @@ jobs:
         run: opam exec -- dune build --profile release
 
       - name: Stage binary
+        shell: bash
+        env:
+          TRIPLE: ${{ matrix.triple }}
         run: |
-          cp _build/default/bin/httui-lsp/httui_lsp.exe "httui-lsp-${{ matrix.triple }}"
+          SUFFIX=""
+          [[ "$TRIPLE" == *windows* ]] && SUFFIX=".exe"
+          cp _build/default/bin/httui-lsp/httui_lsp.exe "httui-lsp-$TRIPLE$SUFFIX"
           # dune outputs are read-only and cp preserves the mode; strip
           # needs a writable file.
-          chmod 755 "httui-lsp-${{ matrix.triple }}"
-          strip "httui-lsp-${{ matrix.triple }}"
+          chmod 755 "httui-lsp-$TRIPLE$SUFFIX"
+          strip "httui-lsp-$TRIPLE$SUFFIX"
 
       # The server answers initialize and exits cleanly on stdin EOF; a
       # binary that fails to handshake must never reach the release.
       - name: Smoke test (initialize handshake)
+        shell: bash
+        env:
+          TRIPLE: ${{ matrix.triple }}
         run: |
+          SUFFIX=""
+          [[ "$TRIPLE" == *windows* ]] && SUFFIX=".exe"
           BODY='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"processId":null,"rootUri":null,"capabilities":{}}}'
           printf "Content-Length: %d\r\n\r\n%s" "${#BODY}" "$BODY" \
-            | "./httui-lsp-${{ matrix.triple }}" \
+            | "./httui-lsp-$TRIPLE$SUFFIX" \
             | grep -q '"hoverProvider":true'
 
       - uses: actions/upload-artifact@v4
         with:
           name: httui-lsp-${{ matrix.triple }}
-          path: httui-lsp-${{ matrix.triple }}
+          path: httui-lsp-${{ matrix.triple }}*
           if-no-files-found: error
 
   # CM6 first-paint grammar, consumed by the desktop as a pinned
