@@ -109,15 +109,19 @@ jobs:
             libsqlite3-0.dll
           if-no-files-found: error
 
-  # CM6 first-paint grammar, consumed by the desktop as a pinned
-  # tarball URL. Version is synced to the tag so the asset name and the
-  # package version always match.
+  # CM6 first-paint grammars, consumed by the desktop as pinned
+  # tarball URLs. Versions are synced to the tag so the asset names and
+  # the package versions always match.
   lezer:
-    name: Lezer package
+    name: Lezer package (${{ matrix.package }})
     runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        package: [lezer-httui-refs, lezer-httui-http]
     defaults:
       run:
-        working-directory: grammars-lezer/lezer-httui-refs
+        working-directory: grammars-lezer/${{ matrix.package }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -135,8 +139,8 @@ jobs:
           npm pack
       - uses: actions/upload-artifact@v4
         with:
-          name: lezer-refs-tarball
-          path: grammars-lezer/lezer-httui-refs/httui-lezer-refs-*.tgz
+          name: ${{ matrix.package }}-tarball
+          path: grammars-lezer/${{ matrix.package }}/httui-lezer-*.tgz
           if-no-files-found: error
 
   # Single publish step after all builds so the release appears once,
