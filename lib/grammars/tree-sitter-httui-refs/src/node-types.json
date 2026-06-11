@@ -44,6 +44,10 @@
         {
           "type": "index_access",
           "named": true
+        },
+        {
+          "type": "number",
+          "named": true
         }
       ]
     }
@@ -77,6 +81,10 @@
         },
         {
           "type": "identifier",
+          "named": true
+        },
+        {
+          "type": "prev",
           "named": true
         }
       ]
@@ -120,6 +128,10 @@
   },
   {
     "type": "number",
+    "named": true
+  },
+  {
+    "type": "prev",
     "named": true
   },
   {

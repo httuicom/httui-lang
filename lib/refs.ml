@@ -37,7 +37,9 @@ let rec collect_refs node ~content ~base acc =
       | None -> acc (* empty {{}} — nothing to analyze *)
       | Some body -> (
           match
-            List.find_opt (fun c -> kind c = "identifier") (named_children body)
+            List.find_opt
+              (fun c -> kind c = "identifier" || kind c = "prev")
+              (named_children body)
           with
           | None -> acc
           | Some ident ->
@@ -53,7 +55,8 @@ let rec collect_refs node ~content ~base acc =
                     named_children dp
                     |> List.concat_map (fun seg ->
                         named_children seg
-                        |> List.filter (fun c -> kind c = "identifier")
+                        |> List.filter (fun c ->
+                            kind c = "identifier" || kind c = "number")
                         |> List.map (fun id ->
                             (base + start_byte id, base + end_byte id)))
               in

@@ -61,6 +61,18 @@ describe("lezer-httui-refs", () => {
       // Env vars are syntactically identical to aliases at this layer;
       // disambiguation happens in the semantic walk (OCaml side).
     });
+
+    it("parses the positional alias {{$prev.body.id}}", () => {
+      const names = nodeNames("{{$prev.body.id}}");
+      expect(names).toContain("Prev");
+      expect(names.filter((n) => n === "PathSegment").length).toBe(2);
+    });
+
+    it("parses numeric dotted segments {{a.results.0.id}}", () => {
+      const names = nodeNames("{{a.results.0.id}}");
+      expect(names.filter((n) => n === "PathSegment").length).toBe(3);
+      expect(names).toContain("Number");
+    });
   });
 
   describe("text + refs interaction", () => {

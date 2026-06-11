@@ -129,3 +129,51 @@ empty document
 
 ---
 (source_file)
+
+==============================
+prev alias bare
+==============================
+{{$prev}}
+---
+(source_file
+  (ref
+    (ref_body
+      (prev))))
+
+==============================
+prev alias with path
+==============================
+{{$prev.body.id}}
+---
+(source_file
+  (ref
+    (ref_body
+      (prev)
+      (dot_path
+        (path_segment
+          (identifier))
+        (path_segment
+          (identifier))))))
+
+==============================
+numeric dotted segments
+==============================
+{{q1.response.results.0.rows.0.id}}
+---
+(source_file
+  (ref
+    (ref_body
+      (identifier)
+      (dot_path
+        (path_segment
+          (identifier))
+        (path_segment
+          (identifier))
+        (path_segment
+          (number))
+        (path_segment
+          (identifier))
+        (path_segment
+          (number))
+        (path_segment
+          (identifier))))))

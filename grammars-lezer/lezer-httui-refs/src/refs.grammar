@@ -5,16 +5,17 @@
 // the CodeMirror 6 client for first-paint lexical highlighting; LSP
 // enriches with semantic info (resolved vs unresolved, types, etc.).
 //
-// Grammar coverage (this slice):
+// Grammar coverage:
 //   {{alias}}                    — alias only
 //   {{alias.path}}               — alias + dot navigation
 //   {{alias.path.nested}}        — multi-segment path
 //   {{alias.path[0]}}            — array index
+//   {{alias.path.0.nested}}     — numeric dotted segment
 //   {{ENV_VAR}}                  — env var (no dot)
+//   {{$prev.path}}               — positional alias
 //
-// Deferred (future slices):
+// Deferred:
 //   {{alias | filter}}           — pipeline syntax (v2.0)
-//   {{$prev.path}}               — removed from product
 //
 // Sync contract: tree-sitter-httui-refs (canonical, in lib/grammars/)
 // must emit equivalent token kinds for the same inputs. Cross-grammar
@@ -24,11 +25,11 @@
 
 Ref { LBrace RefBody? RBrace }
 
-RefBody { Identifier DotPath? }
+RefBody { (Identifier | Prev) DotPath? }
 
 DotPath { (Dot PathSegment)+ }
 
-PathSegment { Identifier IndexAccess? }
+PathSegment { (Identifier | Number) IndexAccess? }
 
 IndexAccess { LBracket Number RBracket }
 
@@ -39,6 +40,7 @@ IndexAccess { LBracket Number RBracket }
   LBracket { "[" }
   RBracket { "]" }
   Identifier { $[a-zA-Z_] $[a-zA-Z0-9_]* }
+  Prev { "$prev" }
   Number { $[0-9]+ }
   Text {
     ![{]+ |
