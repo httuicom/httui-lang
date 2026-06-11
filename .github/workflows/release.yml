@@ -68,11 +68,41 @@ jobs:
           path: httui-lsp-${{ matrix.triple }}
           if-no-files-found: error
 
+  # CM6 first-paint grammar, consumed by the desktop as a pinned
+  # tarball URL. Version is synced to the tag so the asset name and the
+  # package version always match.
+  lezer:
+    name: Lezer package
+    runs-on: ubuntu-22.04
+    defaults:
+      run:
+        working-directory: grammars-lezer/lezer-httui-refs
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install dependencies
+        run: npm ci
+      - name: Sync version from tag
+        run: npm version --no-git-tag-version "${GITHUB_REF_NAME#v}"
+      - name: Test
+        run: npm test
+      - name: Pack
+        run: |
+          npm run build
+          npm pack
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lezer-refs-tarball
+          path: grammars-lezer/lezer-httui-refs/httui-lezer-refs-*.tgz
+          if-no-files-found: error
+
   # Single publish step after all builds so the release appears once,
   # complete — no partial asset lists from racing matrix jobs.
   publish:
     name: Publish release
-    needs: build
+    needs: [build, lezer]
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/download-artifact@v4
@@ -84,7 +114,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" assets/httui-lsp-* \
+          gh release create "$GITHUB_REF_NAME" assets/httui-lsp-* assets/*.tgz \
             --repo "$GITHUB_REPOSITORY" \
             --title "httui-lsp $GITHUB_REF_NAME" \
             --generate-notes
