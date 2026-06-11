@@ -1,6 +1,6 @@
 (lang dune 3.10)
 (name httui_lang)
-(version 0.2.1)
+(version 0.2.2)
 (license MIT)
 (authors "João Ferreira <joao@httui.com>")
 (maintainers "João Ferreira <joao@httui.com>")
