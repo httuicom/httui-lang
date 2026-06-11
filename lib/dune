@@ -6,14 +6,19 @@
 (rule
  (copy grammars/tree-sitter-httui-refs/src/parser.c refs_parser.c))
 
+(rule
+ (copy grammars/tree-sitter-httui-http/src/parser.c http_parser.c))
+
 (library
  (name httui_lang)
  (public_name httui_lang)
  (libraries tree-sitter)
  (foreign_stubs
   (language c)
-  (names refs_stub refs_parser)
-  (include_dirs grammars/tree-sitter-httui-refs/src)))
+  (names refs_stub refs_parser http_stub http_parser)
+  (include_dirs
+   grammars/tree-sitter-httui-refs/src
+   grammars/tree-sitter-httui-http/src)))
 
 ; version.ml is generated so the binary always reports the package
 ; version from dune-project.

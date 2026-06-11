@@ -1,0 +1,143 @@
+[
+  {
+    "type": "body",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "body_line",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "header_line",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "header_name",
+          "named": true
+        },
+        {
+          "type": "header_value",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "request_line",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "method",
+          "named": true
+        },
+        {
+          "type": "url",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "source_file",
+    "named": true,
+    "root": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "body",
+          "named": true
+        },
+        {
+          "type": "comment_line",
+          "named": true
+        },
+        {
+          "type": "desc_line",
+          "named": true
+        },
+        {
+          "type": "disabled_header_line",
+          "named": true
+        },
+        {
+          "type": "disabled_query_line",
+          "named": true
+        },
+        {
+          "type": "header_line",
+          "named": true
+        },
+        {
+          "type": "query_line",
+          "named": true
+        },
+        {
+          "type": "request_line",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": ":",
+    "named": false
+  },
+  {
+    "type": "body_line",
+    "named": true
+  },
+  {
+    "type": "comment_line",
+    "named": true
+  },
+  {
+    "type": "desc_line",
+    "named": true
+  },
+  {
+    "type": "disabled_header_line",
+    "named": true
+  },
+  {
+    "type": "disabled_query_line",
+    "named": true
+  },
+  {
+    "type": "header_name",
+    "named": true
+  },
+  {
+    "type": "header_value",
+    "named": true
+  },
+  {
+    "type": "method",
+    "named": true
+  },
+  {
+    "type": "query_line",
+    "named": true
+  },
+  {
+    "type": "url",
+    "named": true
+  }
+]

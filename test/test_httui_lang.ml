@@ -157,17 +157,36 @@ let () =
 
   (* --- semantic tokens --- *)
   let toks = Httui_lang.Semantic_tokens.of_blocks blocks in
-  (* 2 alias declarations + ghost (1 name + 1 segment)
-     + req1 ref (1 name + 2 segments) + TOKEN (1 name) *)
-  check "token count" (List.length toks = 8);
+  (* per block: fence lang + [alias=] info + alias declaration + method;
+     plus refs in req2: ghost (1 name + 1 segment) + req1 (1 name + 2
+     segments) + TOKEN (1 name) *)
+  check "token count" (List.length toks = 14);
   (match toks with
   | first :: _ ->
-      check "first token is req1 declaration"
-        (first.declaration
-        && first.kind = Httui_lang.Semantic_tokens.Alias
-        && String.sub doc first.t_start (first.t_stop - first.t_start) = "req1"
+      check "first token is the fence lang"
+        (first.kind = Httui_lang.Semantic_tokens.Fence_lang
+        && String.sub doc first.t_start (first.t_stop - first.t_start) = "http"
         )
-  | [] -> check "first token is req1 declaration" false);
+  | [] -> check "first token is the fence lang" false);
+  check "fence info covers only the alias= prefix"
+    (List.exists
+       (fun (t : Httui_lang.Semantic_tokens.t) ->
+         t.kind = Httui_lang.Semantic_tokens.Fence_info
+         && String.sub doc t.t_start (t.t_stop - t.t_start) = "alias=")
+       toks);
+  check "req1 declaration keeps its alias token"
+    (List.exists
+       (fun (t : Httui_lang.Semantic_tokens.t) ->
+         t.declaration
+         && t.kind = Httui_lang.Semantic_tokens.Alias
+         && String.sub doc t.t_start (t.t_stop - t.t_start) = "req1")
+       toks);
+  check "GET is a method token"
+    (List.exists
+       (fun (t : Httui_lang.Semantic_tokens.t) ->
+         t.kind = Httui_lang.Semantic_tokens.Http_method
+         && String.sub doc t.t_start (t.t_stop - t.t_start) = "GET")
+       toks);
   check "ghost name token is unresolved"
     (List.exists
        (fun (t : Httui_lang.Semantic_tokens.t) ->
@@ -187,6 +206,70 @@ let () =
        | _ -> true
      in
      sorted toks);
+
+  (* refs inside header values: HTTP tokens are carved around the ref so
+     LSP tokens never overlap *)
+  let hdr_doc =
+    "```http alias=a\nGET /x\nAuthorization: Bearer {{TOKEN}}\n```\n"
+  in
+  let hdr_toks =
+    Httui_lang.Semantic_tokens.of_blocks (Httui_lang.Fence_scanner.scan hdr_doc)
+  in
+  check "header tokens never overlap ref tokens"
+    (let rec disjoint = function
+       | (a : Httui_lang.Semantic_tokens.t) :: (b :: _ as rest) ->
+           a.t_stop <= b.t_start && disjoint rest
+       | _ -> true
+     in
+     disjoint hdr_toks);
+  check "header name and carved value are emitted"
+    (List.exists
+       (fun (t : Httui_lang.Semantic_tokens.t) ->
+         t.kind = Httui_lang.Semantic_tokens.Http_header_name
+         && String.sub hdr_doc t.t_start (t.t_stop - t.t_start)
+            = "Authorization")
+       hdr_toks
+    && List.exists
+         (fun (t : Httui_lang.Semantic_tokens.t) ->
+           t.kind = Httui_lang.Semantic_tokens.Http_header_value)
+         hdr_toks);
+
+  (* db blocks only carry fence tokens, never http structure *)
+  let db_doc = "```db-postgres alias=q1 limit=50\nSELECT 1\n```\n" in
+  let db_toks =
+    Httui_lang.Semantic_tokens.of_blocks (Httui_lang.Fence_scanner.scan db_doc)
+  in
+  check "db block emits fence tokens"
+    (List.exists
+       (fun (t : Httui_lang.Semantic_tokens.t) ->
+         t.kind = Httui_lang.Semantic_tokens.Fence_lang)
+       db_toks
+    && List.exists
+         (fun (t : Httui_lang.Semantic_tokens.t) ->
+           t.kind = Httui_lang.Semantic_tokens.Fence_info
+           && String.sub db_doc t.t_start (t.t_stop - t.t_start) = "limit=50")
+         db_toks);
+  check "db block emits no http tokens"
+    (not
+       (List.exists
+          (fun (t : Httui_lang.Semantic_tokens.t) ->
+            match t.kind with
+            | Httui_lang.Semantic_tokens.Http_method
+            | Httui_lang.Semantic_tokens.Http_header_name
+            | Httui_lang.Semantic_tokens.Http_header_value ->
+                true
+            | _ -> false)
+          db_toks));
+
+  (* a request line that does not parse yields no http tokens *)
+  let broken = "```http alias=a\nget lowercase\n```\n" in
+  check "broken request line yields no method token"
+    (not
+       (List.exists
+          (fun (t : Httui_lang.Semantic_tokens.t) ->
+            t.kind = Httui_lang.Semantic_tokens.Http_method)
+          (Httui_lang.Semantic_tokens.of_blocks
+             (Httui_lang.Fence_scanner.scan broken))));
 
   (* --- shapes: typed path resolution --- *)
   let module S = Httui_lang.Shape in

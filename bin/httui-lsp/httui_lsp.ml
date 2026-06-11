@@ -114,7 +114,9 @@ let params_json (params : Jsonrpc.Structured.t option) =
    initialize: an httui.* kind is registered only when the client
    announced it; otherwise its LSP-standard fallback takes the slot. *)
 
-let legend_types = ref [ "variable"; "property" ]
+let legend_types =
+  ref [ "keyword"; "parameter"; "property"; "string"; "variable" ]
+
 let legend_modifiers = ref ([] : string list)
 
 let compute_legend ~announced_types ~announced_modifiers =
@@ -126,6 +128,11 @@ let compute_legend ~announced_types ~announced_modifiers =
       pick "httui.alias" "variable";
       pick "httui.env_var" "variable";
       pick "httui.ref_path" "property";
+      pick "httui.http_method" "keyword";
+      pick "httui.http_header_name" "property";
+      pick "httui.http_header_value" "string";
+      pick "httui.fence_lang" "keyword";
+      pick "httui.fence_info" "parameter";
     ]
   in
   legend_types := List.sort_uniq compare names;
@@ -144,6 +151,18 @@ let type_index (kind : Httui_lang.Semantic_tokens.kind) =
         if mem "httui.env_var" then "httui.env_var" else "variable"
     | Httui_lang.Semantic_tokens.Ref_path ->
         if mem "httui.ref_path" then "httui.ref_path" else "property"
+    | Httui_lang.Semantic_tokens.Http_method ->
+        if mem "httui.http_method" then "httui.http_method" else "keyword"
+    | Httui_lang.Semantic_tokens.Http_header_name ->
+        if mem "httui.http_header_name" then "httui.http_header_name"
+        else "property"
+    | Httui_lang.Semantic_tokens.Http_header_value ->
+        if mem "httui.http_header_value" then "httui.http_header_value"
+        else "string"
+    | Httui_lang.Semantic_tokens.Fence_lang ->
+        if mem "httui.fence_lang" then "httui.fence_lang" else "keyword"
+    | Httui_lang.Semantic_tokens.Fence_info ->
+        if mem "httui.fence_info" then "httui.fence_info" else "parameter"
   in
   let rec idx i = function
     | [] -> 0

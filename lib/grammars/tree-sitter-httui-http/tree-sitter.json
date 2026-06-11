@@ -1,0 +1,32 @@
+{
+  "grammars": [
+    {
+      "name": "httui_http",
+      "camelcase": "HttuiHttp",
+      "scope": "source.httui_http",
+      "path": ".",
+      "file-types": []
+    }
+  ],
+  "metadata": {
+    "version": "0.1.0",
+    "license": "MIT",
+    "description": "Tree-sitter grammar for the httui HTTP fence dialect",
+    "authors": [
+      { "name": "gandarfh", "email": "jgdsantosferreira@gmail.com" }
+    ],
+    "links": {
+      "repository": "https://github.com/httuicom/httui-lang",
+      "homepage": "https://httui.com"
+    }
+  },
+  "bindings": {
+    "c": true,
+    "go": false,
+    "node": true,
+    "python": false,
+    "rust": false,
+    "swift": false,
+    "zig": false
+  }
+}
