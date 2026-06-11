@@ -58,7 +58,9 @@ jobs:
           # dune outputs are read-only and cp preserves the mode; strip
           # needs a writable file.
           chmod 755 "httui-lsp-$TRIPLE$SUFFIX"
-          strip "httui-lsp-$TRIPLE$SUFFIX"
+          # GNU strip corrupts MSVC-linked PE binaries — Windows ships
+          # unstripped.
+          [[ "$TRIPLE" == *windows* ]] || strip "httui-lsp-$TRIPLE$SUFFIX"
 
       # The server answers initialize and exits cleanly on stdin EOF; a
       # binary that fails to handshake must never reach the release.
@@ -70,9 +72,10 @@ jobs:
           SUFFIX=""
           [[ "$TRIPLE" == *windows* ]] && SUFFIX=".exe"
           BODY='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"processId":null,"rootUri":null,"capabilities":{}}}'
-          printf "Content-Length: %d\r\n\r\n%s" "${#BODY}" "$BODY" \
-            | "./httui-lsp-$TRIPLE$SUFFIX" \
-            | grep -q '"hoverProvider":true'
+          RESPONSE="$(printf "Content-Length: %d\r\n\r\n%s" "${#BODY}" "$BODY" \
+            | "./httui-lsp-$TRIPLE$SUFFIX" || echo "SERVER_EXIT_$?")"
+          echo "response: ${RESPONSE:0:300}"
+          grep -q '"hoverProvider":true' <<<"$RESPONSE"
 
       - uses: actions/upload-artifact@v4
         with:
