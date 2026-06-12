@@ -19,6 +19,7 @@ depends: [
   "yojson"
   "caqti"
   "caqti-driver-sqlite3"
+  "toml"
   "uri"
   "odoc" {with-doc}
 ]
