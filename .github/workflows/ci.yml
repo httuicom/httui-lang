@@ -41,33 +41,10 @@ jobs:
           ocaml-compiler: ${{ matrix.ocaml-compiler }}
           dune-cache: true
           cache-prefix: ${{ steps.opam-cache-key.outputs.prefix }}
-      # Windows compiles the dependency tree an order of magnitude slower
-      # than Linux, and the setup-ocaml snapshot never includes project
-      # deps. The overlay captures the opam state after the deps install,
-      # making the warm-run install a no-op. It is a strict superset of
-      # the setup-ocaml snapshot within one cache-key generation, so
-      # extracting it over the restored base is safe.
-      - name: Restore deps overlay
-        id: deps-cache
-        if: runner.os == 'Windows'
-        uses: actions/cache/restore@v4
-        with:
-          path: |
-            C:\.opam
-            _opam
-          key: deps-${{ steps.opam-cache-key.outputs.prefix }}-${{ runner.os }}
       - name: Install dune
         run: opam install --yes dune
       - name: Install dependencies
         run: opam install . --deps-only --with-test
-      - name: Save deps overlay
-        if: runner.os == 'Windows' && steps.deps-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
-        with:
-          path: |
-            C:\.opam
-            _opam
-          key: deps-${{ steps.opam-cache-key.outputs.prefix }}-${{ runner.os }}
       - name: Build
         run: opam exec -- dune build
       - name: Test
