@@ -23,4 +23,5 @@
   yojson
   caqti
   caqti-driver-sqlite3
+  toml
   uri))

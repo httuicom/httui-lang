@@ -229,7 +229,10 @@ let on_hover (r : Jsonrpc.Request.t) =
       let blocks = Httui_lang.Fence_scanner.scan text in
       let offset = offset_of_position text p.position in
       match
-        Httui_lang.Analyze.hover_at ~env_keys:(Env_store.keys ())
+        Httui_lang.Analyze.hover_at
+          ~env_keys:
+            (Env_store.keys_for
+               ~file_path:(T.DocumentUri.to_path p.textDocument.uri))
           ~shapes:(shapes_for_uri p.textDocument.uri)
           ~values:(values_for_uri p.textDocument.uri)
           blocks ~offset
@@ -253,7 +256,10 @@ let on_completion (r : Jsonrpc.Request.t) =
       let blocks = Httui_lang.Fence_scanner.scan text in
       let offset = offset_of_position text p.position in
       let items =
-        Httui_lang.Analyze.completion_at ~env_keys:(Env_store.keys ())
+        Httui_lang.Analyze.completion_at
+          ~env_keys:
+            (Env_store.keys_for
+               ~file_path:(T.DocumentUri.to_path p.textDocument.uri))
           ~shapes:(shapes_for_uri p.textDocument.uri)
           text blocks ~offset
         |> List.map (fun (it : Httui_lang.Analyze.completion_item) ->

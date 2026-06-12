@@ -15,13 +15,28 @@ let server = "../bin/httui-lsp/httui_lsp.exe"
 
 type client = { ic : in_channel; oc : out_channel }
 
-let spawn_server ?(args = []) () =
+let spawn_server ?(args = []) ?(env_extra = []) () =
   let from_server, server_stdout = Unix.pipe () in
   let server_stdin, to_server = Unix.pipe () in
+  let overridden k =
+    List.exists
+      (fun (k', _) ->
+        String.length k > String.length k'
+        && k' ^ "=" = String.sub k 0 (String.length k' + 1))
+      env_extra
+  in
+  let env =
+    Array.append
+      (Array.of_list
+         (List.filter
+            (fun e -> not (overridden e))
+            (Array.to_list (Unix.environment ()))))
+      (Array.of_list (List.map (fun (k, v) -> k ^ "=" ^ v) env_extra))
+  in
   let _pid =
-    Unix.create_process server
+    Unix.create_process_env server
       (Array.of_list (server :: args))
-      server_stdin server_stdout Unix.stderr
+      env server_stdin server_stdout Unix.stderr
   in
   Unix.close server_stdout;
   Unix.close server_stdin;
@@ -347,7 +362,8 @@ let () =
   let _ = recv_from c2 in
   send_to c2 (notif "exit");
 
-  (* --- third client: --db fixture enriches completion with env keys --- *)
+  (* --- third client: vault env files enrich completion with env keys,
+     --db serves shapes/results --- *)
   let db_path, db_exec =
     let path = Filename.temp_file "httui-lsp-test" ".db" in
     Sys.remove path;
@@ -362,17 +378,6 @@ let () =
           | Error e -> failwith (Caqti_error.show e)
         in
         exec
-          "CREATE TABLE environments (id TEXT PRIMARY KEY, name TEXT, \
-           is_active INTEGER NOT NULL DEFAULT 0)";
-        exec
-          "CREATE TABLE env_variables (id TEXT PRIMARY KEY, environment_id \
-           TEXT, key TEXT, value TEXT, is_secret INTEGER NOT NULL DEFAULT 0)";
-        exec "INSERT INTO environments VALUES ('e1', 'dev', 1)";
-        exec "INSERT INTO env_variables VALUES ('v1', 'e1', 'BASE_URL', '', 0)";
-        exec
-          "INSERT INTO env_variables VALUES ('v2', 'e1', 'API_TOKEN', \
-           '__KEYCHAIN__', 1)";
-        exec
           "CREATE TABLE block_schema_cache (file_path TEXT NOT NULL, alias \
            TEXT NOT NULL, shape TEXT NOT NULL, cache_schema_version INTEGER \
            NOT NULL, updated_at TEXT, PRIMARY KEY (file_path, alias))";
@@ -382,7 +387,43 @@ let () =
            TEXT, elapsed_ms INTEGER, total_rows INTEGER, executed_at TEXT)";
         (path, exec)
   in
-  let c3 = spawn_server ~args:[ "--db"; db_path ] () in
+  (* temp vault with an active env: BASE_URL in [vars], API_TOKEN in
+     [secrets], LOCAL_URL via the .local.toml override *)
+  let write_file path contents =
+    let oc = open_out path in
+    output_string oc contents;
+    close_out oc
+  in
+  let vault_root = Filename.temp_file "httui-lsp-vault" "" in
+  Sys.remove vault_root;
+  Unix.mkdir vault_root 0o755;
+  Unix.mkdir (Filename.concat vault_root "envs") 0o755;
+  write_file
+    (Filename.concat vault_root "envs/dev.toml")
+    "version = \"1\"\n\n\
+     [vars]\n\
+     BASE_URL = \"https://api.example.com\"\n\n\
+     [secrets]\n\
+     API_TOKEN = \"{{keychain}}\"\n";
+  write_file
+    (Filename.concat vault_root "envs/dev.local.toml")
+    "[vars]\nLOCAL_URL = \"http://localhost\"\n";
+  write_file
+    (Filename.concat vault_root "envs/staging.toml")
+    "[vars]\nSTAGING_ONLY = \"x\"\n";
+  let cfg_root = Filename.temp_file "httui-lsp-cfg" "" in
+  Sys.remove cfg_root;
+  Unix.mkdir cfg_root 0o755;
+  Unix.mkdir (Filename.concat cfg_root "httui") 0o755;
+  write_file
+    (Filename.concat cfg_root "httui/user.toml")
+    (Printf.sprintf "[active_envs]\n\"%s\" = \"dev\"\n"
+       (String.map (fun c -> if c = '\\' then '/' else c) vault_root));
+  let c3 =
+    spawn_server ~args:[ "--db"; db_path ]
+      ~env_extra:[ ("XDG_CONFIG_HOME", cfg_root) ]
+      ()
+  in
   send_to c3
     (req 1 "initialize"
        ~params:
@@ -394,6 +435,14 @@ let () =
             ]));
   let _ = recv_from c3 in
   send_to c3 (notif "initialized" ~params:(`Assoc []));
+  let vault_uri =
+    (* well-formed file URI from a platform path: forward slashes and a
+       leading slash before Windows drive letters *)
+    let p = String.map (fun c -> if c = '\\' then '/' else c) vault_root in
+    let p = if String.length p > 0 && p.[0] = '/' then p else "/" ^ p in
+    "file://" ^ p ^ "/t.md"
+  in
+  let vault_doc = `Assoc [ ("uri", `String vault_uri) ] in
   send_to c3
     (notif "textDocument/didOpen"
        ~params:
@@ -402,7 +451,7 @@ let () =
               ( "textDocument",
                 `Assoc
                   [
-                    ("uri", `String "file:///t.md");
+                    ("uri", `String vault_uri);
                     ("languageId", `String "markdown");
                     ("version", `Int 1);
                     ("text", `String doc_bad);
@@ -414,7 +463,7 @@ let () =
        ~params:
          (`Assoc
             [
-              ("textDocument", text_doc);
+              ("textDocument", vault_doc);
               ("position", `Assoc [ ("line", `Int 7); ("character", `Int 35) ]);
             ]));
   let comp3 = recv_from c3 in
@@ -423,10 +472,14 @@ let () =
     | Some (`List items) -> List.filter_map (fun i -> member "label" i) items
     | _ -> []
   in
-  check "completion includes env keys from --db"
+  check "completion includes env keys from the vault files"
     (List.mem (`String "BASE_URL") comp3_labels
     && List.mem (`String "API_TOKEN") comp3_labels
     && List.mem (`String "req1") comp3_labels);
+  check "local override keys are merged in"
+    (List.mem (`String "LOCAL_URL") comp3_labels);
+  check "inactive env keys stay out"
+    (not (List.mem (`String "STAGING_ONLY") comp3_labels));
   check "secret env key is marked in detail"
     (match member "result" comp3 with
     | Some (`List items) ->
@@ -483,8 +536,7 @@ let () =
          (`Assoc
             [
               ( "textDocument",
-                `Assoc [ ("uri", `String "file:///t.md"); ("version", `Int 2) ]
-              );
+                `Assoc [ ("uri", `String vault_uri); ("version", `Int 2) ] );
               ( "contentChanges",
                 `List [ `Assoc [ ("text", `String doc_typed) ] ] );
             ]));
@@ -497,7 +549,7 @@ let () =
        ~params:
          (`Assoc
             [
-              ("textDocument", text_doc);
+              ("textDocument", vault_doc);
               ("position", `Assoc [ ("line", `Int 7); ("character", `Int 62) ]);
             ]));
   let comp4 = recv_from c3 in
@@ -513,7 +565,7 @@ let () =
        ~params:
          (`Assoc
             [
-              ("textDocument", text_doc);
+              ("textDocument", vault_doc);
               ("position", `Assoc [ ("line", `Int 7); ("character", `Int 39) ]);
             ]));
   let hov4 = recv_from c3 in
@@ -536,7 +588,7 @@ let () =
        ~params:
          (`Assoc
             [
-              ("textDocument", text_doc);
+              ("textDocument", vault_doc);
               ("position", `Assoc [ ("line", `Int 7); ("character", `Int 39) ]);
             ]));
   let hov5 = recv_from c3 in
