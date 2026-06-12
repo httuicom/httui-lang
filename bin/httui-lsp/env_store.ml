@@ -57,6 +57,17 @@ let sub_table key table =
    vault paths the same way, but normalize both sides anyway *)
 let normalize p = String.map (fun c -> if c = '\\' then '/' else c) p
 
+(* URI-to-path conversions sometimes keep a leading slash before a
+   Windows drive letter ("/C:/x"); the filesystem rejects that form *)
+let strip_drive_slash p =
+  if
+    String.length p >= 3
+    && p.[0] = '/'
+    && ((p.[1] >= 'A' && p.[1] <= 'Z') || (p.[1] >= 'a' && p.[1] <= 'z'))
+    && p.[2] = ':'
+  then String.sub p 1 (String.length p - 1)
+  else p
+
 let active_env_for ~vault_root =
   Option.bind (user_config_path ()) (fun path ->
       Option.bind (table_of_file path) (fun t ->
@@ -68,7 +79,36 @@ let active_env_for ~vault_root =
               in
               match lookup vault_root with
               | Some name -> Some name
-              | None -> lookup (normalize vault_root))))
+              | None -> (
+                  match lookup (normalize vault_root) with
+                  | Some name -> Some name
+                  | None ->
+                      (* Windows paths are case-insensitive and the
+                         drive letter case differs between producers.
+                         [Key.to_string] quotes non-bare keys, so strip
+                         the quotes before comparing. *)
+                      let unquote s =
+                        let n = String.length s in
+                        if n >= 2 && s.[0] = '"' && s.[n - 1] = '"' then
+                          String.sub s 1 (n - 2)
+                        else s
+                      in
+                      let want =
+                        String.lowercase_ascii (normalize vault_root)
+                      in
+                      Toml.Types.Table.fold
+                        (fun k v acc ->
+                          match (acc, v) with
+                          | Some _, _ -> acc
+                          | None, Toml.Types.TString name
+                            when String.lowercase_ascii
+                                   (normalize
+                                      (unquote
+                                         (Toml.Types.Table.Key.to_string k)))
+                                 = want ->
+                              Some name
+                          | None, _ -> None)
+                        actives None))))
 
 let names_of_section table section ~secret =
   match sub_table section table with
@@ -90,6 +130,19 @@ let names_of_file path =
     outside a vault, no env is active, or any read fails — analysis degrades
     gracefully, env names are an enrichment, not a requirement. *)
 let keys_for ~file_path =
+  let file_path = strip_drive_slash file_path in
+  (* TEMP debug for the windows CI run; removed before merge *)
+  Printf.eprintf "env_store: file_path=%s root=%s active=%s\n%!" file_path
+    (match find_vault_root (Filename.dirname file_path) with
+    | Some r -> r
+    | None -> "<none>")
+    (match
+       Option.bind
+         (find_vault_root (Filename.dirname file_path))
+         (fun r -> active_env_for ~vault_root:r)
+     with
+    | Some e -> e
+    | None -> "<none>");
   match find_vault_root (Filename.dirname file_path) with
   | None -> []
   | Some root -> (
