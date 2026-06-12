@@ -13,27 +13,61 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        include:
+          - os: ubuntu-latest
+            ocaml-compiler: "5.4.1"
+          - os: macos-latest
+            ocaml-compiler: "5.4.1"
+          # The conf-* atoms must be created together with the switch:
+          # setup-ocaml snapshots its opam cache right after switch
+          # creation and never re-saves it, and installing conf-pkg-config
+          # or the conf-mingw-w64-* packages afterwards rebuilds
+          # mingw-w64-shims and the whole compiler cone above it (~14 min
+          # on every run). Both gmp arches are listed because the 0install
+          # solver resolves i686 and x86_64 together (ocaml/opam#6843).
+          - os: windows-latest
+            ocaml-compiler: "ocaml-base-compiler.5.4.1,conf-pkg-config,conf-mingw-w64-gcc-i686,conf-gmp,conf-gmp-powm-sec,conf-sqlite3,conf-mingw-w64-gmp-i686,conf-mingw-w64-gmp-x86_64,conf-mingw-w64-sqlite3-x86_64"
     steps:
       - uses: actions/checkout@v4
-      # setup-ocaml never re-saves an exact-hit cache, so a stale snapshot
-      # forces a full compiler rebuild on every run once opam-repository
-      # metadata drifts (frequent for the Windows mingw packages). The
-      # monthly stamp bounds that to at most one cold run per month; the
-      # opam-file hash refreshes the cache when dependencies change.
+      # The monthly stamp bounds opam-repository metadata drift (the
+      # setup-ocaml snapshot is immutable once saved); the opam-file hash
+      # refreshes the cache when the dependency set changes.
       - name: Compute opam cache key
         id: opam-cache-key
         shell: bash
         run: echo "prefix=v3-$(date -u +%Y-%m)-${{ hashFiles('**/*.opam') }}" >> "$GITHUB_OUTPUT"
       - uses: ocaml/setup-ocaml@v3
         with:
-          ocaml-compiler: "5.4.1"
+          ocaml-compiler: ${{ matrix.ocaml-compiler }}
           dune-cache: true
           cache-prefix: ${{ steps.opam-cache-key.outputs.prefix }}
+      # Windows compiles the dependency tree an order of magnitude slower
+      # than Linux, and the setup-ocaml snapshot never includes project
+      # deps. The overlay captures the opam state after the deps install,
+      # making the warm-run install a no-op. It is a strict superset of
+      # the setup-ocaml snapshot within one cache-key generation, so
+      # extracting it over the restored base is safe.
+      - name: Restore deps overlay
+        id: deps-cache
+        if: runner.os == 'Windows'
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            C:\.opam
+            _opam
+          key: deps-${{ steps.opam-cache-key.outputs.prefix }}-${{ runner.os }}
       - name: Install dune
         run: opam install --yes dune
       - name: Install dependencies
         run: opam install . --deps-only --with-test
+      - name: Save deps overlay
+        if: runner.os == 'Windows' && steps.deps-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            C:\.opam
+            _opam
+          key: deps-${{ steps.opam-cache-key.outputs.prefix }}-${{ runner.os }}
       - name: Build
         run: opam exec -- dune build
       - name: Test

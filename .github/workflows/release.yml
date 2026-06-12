@@ -23,19 +23,27 @@ jobs:
         include:
           - os: ubuntu-22.04
             triple: x86_64-unknown-linux-gnu
+            ocaml-compiler: "5.4.1"
           - os: macos-latest
             triple: aarch64-apple-darwin
+            ocaml-compiler: "5.4.1"
           - os: macos-15-intel
             triple: x86_64-apple-darwin
+            ocaml-compiler: "5.4.1"
+          # Same conf-* injection as ci.yml: the atoms must be created
+          # together with the switch, otherwise installing them during the
+          # deps step rebuilds mingw-w64-shims and the whole compiler cone
+          # above it on every run.
           - os: windows-latest
             triple: x86_64-pc-windows-msvc
+            ocaml-compiler: "ocaml-base-compiler.5.4.1,conf-pkg-config,conf-mingw-w64-gcc-i686,conf-gmp,conf-gmp-powm-sec,conf-sqlite3,conf-mingw-w64-gmp-i686,conf-mingw-w64-gmp-x86_64,conf-mingw-w64-sqlite3-x86_64"
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
 
-      # Same cache rotation as ci.yml: setup-ocaml never re-saves an
-      # exact-hit cache, so a stale snapshot forces a full compiler
-      # rebuild on every run once opam-repository metadata drifts.
+      # Same cache rotation as ci.yml: the monthly stamp bounds
+      # opam-repository metadata drift, the opam-file hash refreshes the
+      # cache when the dependency set changes.
       - name: Compute opam cache key
         id: opam-cache-key
         shell: bash
@@ -43,7 +51,7 @@ jobs:
 
       - uses: ocaml/setup-ocaml@v3
         with:
-          ocaml-compiler: "5.4.1"
+          ocaml-compiler: ${{ matrix.ocaml-compiler }}
           dune-cache: true
           cache-prefix: ${{ steps.opam-cache-key.outputs.prefix }}
 
