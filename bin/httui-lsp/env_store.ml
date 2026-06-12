@@ -131,18 +131,6 @@ let names_of_file path =
     gracefully, env names are an enrichment, not a requirement. *)
 let keys_for ~file_path =
   let file_path = strip_drive_slash file_path in
-  (* TEMP debug for the windows CI run; removed before merge *)
-  Printf.eprintf "env_store: file_path=%s root=%s active=%s\n%!" file_path
-    (match find_vault_root (Filename.dirname file_path) with
-    | Some r -> r
-    | None -> "<none>")
-    (match
-       Option.bind
-         (find_vault_root (Filename.dirname file_path))
-         (fun r -> active_env_for ~vault_root:r)
-     with
-    | Some e -> e
-    | None -> "<none>");
   match find_vault_root (Filename.dirname file_path) with
   | None -> []
   | Some root -> (
