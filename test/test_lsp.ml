@@ -435,9 +435,14 @@ let () =
             ]));
   let _ = recv_from c3 in
   send_to c3 (notif "initialized" ~params:(`Assoc []));
-  let vault_doc =
-    `Assoc [ ("uri", `String ("file://" ^ vault_root ^ "/t.md")) ]
+  let vault_uri =
+    (* well-formed file URI from a platform path: forward slashes and a
+       leading slash before Windows drive letters *)
+    let p = String.map (fun c -> if c = '\\' then '/' else c) vault_root in
+    let p = if String.length p > 0 && p.[0] = '/' then p else "/" ^ p in
+    "file://" ^ p ^ "/t.md"
   in
+  let vault_doc = `Assoc [ ("uri", `String vault_uri) ] in
   send_to c3
     (notif "textDocument/didOpen"
        ~params:
@@ -446,7 +451,7 @@ let () =
               ( "textDocument",
                 `Assoc
                   [
-                    ("uri", `String ("file://" ^ vault_root ^ "/t.md"));
+                    ("uri", `String vault_uri);
                     ("languageId", `String "markdown");
                     ("version", `Int 1);
                     ("text", `String doc_bad);
@@ -531,11 +536,7 @@ let () =
          (`Assoc
             [
               ( "textDocument",
-                `Assoc
-                  [
-                    ("uri", `String ("file://" ^ vault_root ^ "/t.md"));
-                    ("version", `Int 2);
-                  ] );
+                `Assoc [ ("uri", `String vault_uri); ("version", `Int 2) ] );
               ( "contentChanges",
                 `List [ `Assoc [ ("text", `String doc_typed) ] ] );
             ]));
