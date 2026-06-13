@@ -49,6 +49,17 @@ jobs:
         run: opam exec -- dune build
       - name: Test
         run: opam exec -- dune runtest
+      # Perf gate: regenerate fixtures and assert the LSP E2E path stays
+      # within the ADR-010 hard-fail budgets. Linux only — shared runners
+      # are too noisy for the tight p95 targets, but a hard-fail breach is
+      # a real regression. See bench/BASELINE.md.
+      - name: Benchmark budget gate
+        if: runner.os == 'Linux'
+        run: |
+          python3 bench/gen_fixtures.py
+          opam exec -- dune build bench/bench_analysis.exe
+          python3 bench/lsp_roundtrip.py \
+            _build/default/bin/httui-lsp/httui_lsp.exe --check
       - name: Format check
         if: runner.os == 'Linux'
         run: |

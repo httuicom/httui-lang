@@ -1,30 +1,33 @@
 # Benchmark fixtures and harness
 
-Synthetic vault fixtures used to validate performance budgets:
+Synthetic vault fixtures used to validate the ADR-010 performance
+budgets, generated deterministically by `gen_fixtures.py`:
 
-- **Medium**: ~500 lines of markdown, 10 executable blocks (5 HTTP + 5 SQL),
-  ~20 references.
-- **Large**: ~5000 lines, 50 blocks, ~200 references.
+- **medium.md**: ~500 lines, 10 executable blocks (5 HTTP + 5 SQL), ~30 refs.
+- **large.md**: ~5000 lines, 50 blocks (mixed), ~190 refs.
 
-Operations measured per fixture include incremental retokenize, semantic
-tokens delta, completion popup latency, hover latency, diagnostic publish,
-rename, find-all-references, format on save, and cancellation latency.
-
-Cold-start metrics tracked separately: LSP spawn-to-ready, time-to-first-
-completion after `didOpen`, first parse + semantic tokens, and schema cache
-lookup. Memory budget (RSS) tracked on both medium and large fixtures.
+Refs only point at blocks declared above (DAG by construction), so they
+exercise real scope resolution. Regenerate with `python3 bench/gen_fixtures.py`.
 
 ## Harness
 
-- `lsp_roundtrip.py` — transport baseline against the built `httui-lsp`
-  binary: spawn-to-initialize, request round-trip (framing + JSON +
-  dispatch), and didChange ingestion. No external dependencies.
+Two complementary benchmarks, both run by `make bench`:
+
+- `bench_analysis.ml` — **in-process** analysis cost (no transport): scan,
+  diagnostics, semantic tokens, completion, hover over each fixture. This
+  isolates the pure-OCaml algorithm cost.
+- `lsp_roundtrip.py` — **E2E over stdio**: spawn-to-initialize, request
+  round-trip floor, and per-fixture `didChange→diagnostics` +
+  `semanticTokens/full`. The gap between this and the in-process numbers
+  is the LSP encoding + transport cost. No external dependencies.
 
 ```bash
-dune build
-make bench          # or: python3 bench/lsp_roundtrip.py
+make bench
+# or individually:
+python3 bench/gen_fixtures.py
+dune exec bench/bench_analysis.exe -- bench/fixtures
+python3 bench/lsp_roundtrip.py
 ```
 
-Feature-level operations (hover, completion, semantic tokens,
-diagnostics) gain sections here as the server implements them; the
-fixtures above become their inputs.
+Current numbers and the optimization conclusions they drive live in
+[`BASELINE.md`](BASELINE.md).
