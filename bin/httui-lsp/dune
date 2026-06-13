@@ -11,4 +11,5 @@
   caqti.blocking
   caqti-driver-sqlite3
   toml
+  threads.posix
   uri))

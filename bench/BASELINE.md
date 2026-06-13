@@ -74,3 +74,16 @@ browser layout/paint.
 3. **Frontend full-doc scanners (Fase 4) — the real desktop win.** They
    scale linearly with doc size and dominate the keystroke cost. Early-out
    by sentinel + incrementalizing the fence scanner cut this directly.
+
+## Update — semantic tokens encoding fix + delta
+
+`semanticTokens/full [large]` went from **69.7ms → 1.77ms p95** (40x). The
+cost was never the token computation (`of_blocks` is 0.83ms) — it was the
+LSP delta-position encoding calling `Doc_position.of_offset` (O(offset),
+counts lines from the document start) once per token, i.e. O(n²) over the
+document. Replaced with a single forward cursor over the sorted tokens
+(O(doc)). `semanticTokens/full/delta` (LSP 3.17) and request cancellation
+also landed; with no request now exceeding ~2ms, the pre-process cancel
+check (reader thread + cancelled-id set, no mid-flight interruption) is
+sufficient for the budget. Fase 2 (analysis memo/cache) stays dropped —
+the analysis was never the bottleneck.
