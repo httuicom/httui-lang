@@ -192,6 +192,99 @@ let block_index_at blocks ~offset =
   in
   go 0 blocks
 
+(* --- alias navigation (definition / references / rename) ---------------- *)
+
+type alias_symbol = {
+  alias : string;
+  decl_range : (int * int) option;
+      (** doc-absolute range of the alias value in the declaring block's info
+          string, when one is in scope *)
+  ref_ranges : (int * int) list;
+      (** doc-absolute name-token range of every [{{alias...}}] that resolves to
+          that same declaration *)
+}
+
+(* The block that declares [name] as seen from block [index]: the nearest
+   aliased block strictly above. For [$prev] it is the nearest executable
+   aliased block (mirrors the runtime). Returns its index. *)
+let decl_index_for blocks ~index name =
+  let arr = Array.of_list blocks in
+  let rec back j =
+    if j < 0 then None
+    else
+      let (b : Block.t) = arr.(j) in
+      let matches =
+        if name = prev_name then Block.is_executable b && b.alias <> None
+        else b.alias = Some name
+      in
+      if matches then Some j else back (j - 1)
+  in
+  back (index - 1)
+
+(* Resolve the alias symbol under [offset]: the cursor may sit on the
+   alias value in a fence info string (a declaration) or on the name
+   token of a [{{alias...}}] reference. Path segments and prose are not
+   alias tokens, so they yield [None] — rename never touches text that
+   merely looks like an alias. *)
+let symbol_at blocks ~offset =
+  let arr = Array.of_list blocks in
+  let on_decl =
+    let n = Array.length arr in
+    let rec find i =
+      if i >= n then None
+      else
+        let (b : Block.t) = arr.(i) in
+        match (b.alias, b.alias_offset) with
+        | Some a, Some ao when offset >= ao && offset <= ao + String.length a ->
+            Some (i, a)
+        | _ -> find (i + 1)
+    in
+    find 0
+  in
+  let found =
+    match on_decl with
+    | Some (i, a) -> Some (i, a)
+    | None -> (
+        match block_index_at blocks ~offset with
+        | None -> None
+        | Some (i, b) ->
+            Refs.of_block b
+            |> List.find_opt (fun (r : Refs.occurrence) ->
+                offset >= r.name_start && offset <= r.name_stop)
+            |> Option.map (fun (r : Refs.occurrence) -> (i, r.name)))
+  in
+  match found with
+  | None -> None
+  | Some (index, alias) ->
+      let decl_idx =
+        if on_decl <> None then Some index
+        else decl_index_for blocks ~index alias
+      in
+      let decl_range =
+        Option.bind decl_idx (fun d ->
+            let (b : Block.t) = arr.(d) in
+            match (b.alias, b.alias_offset) with
+            | Some a, Some ao -> Some (ao, ao + String.length a)
+            | _ -> None)
+      in
+      let ref_ranges =
+        match decl_idx with
+        | None -> []
+        | Some d ->
+            List.concat
+              (List.mapi
+                 (fun j (b : Block.t) ->
+                   Refs.of_block b
+                   |> List.filter_map (fun (r : Refs.occurrence) ->
+                       if
+                         r.name = alias
+                         && decl_index_for blocks ~index:j r.name = Some d
+                       then Some (r.name_start, r.name_stop)
+                       else None))
+                 blocks)
+      in
+      Some { alias; decl_range; ref_ranges }
+
 let fields_markdown fields =
   fields
   |> List.map (fun (k, s) -> Printf.sprintf "- `%s`: %s" k (Shape.type_name s))

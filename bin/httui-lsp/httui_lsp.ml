@@ -210,7 +210,8 @@ let on_initialize (r : Jsonrpc.Request.t) =
                    ~tokenModifiers:!legend_modifiers)
               ~full:(`Full (T.SemanticTokensOptions.create_full ~delta:true ()))
               ()))
-      ()
+      ~definitionProvider:(`Bool true) ~referencesProvider:(`Bool true)
+      ~renameProvider:(`Bool true) ()
   in
   let serverInfo =
     T.InitializeResult.create_serverInfo ~name:"httui-lsp"
@@ -389,6 +390,67 @@ let on_semantic_tokens_delta (r : Jsonrpc.Request.t) =
             (T.SemanticTokens.yojson_of_t
                (T.SemanticTokens.create ~data ~resultId:result_id ())))
 
+(* --- alias navigation: definition / references / rename ----------------- *)
+
+let location_of_range text uri ~start ~stop =
+  T.Location.create ~uri ~range:(range_of_offsets text ~start ~stop)
+
+let on_definition (r : Jsonrpc.Request.t) =
+  let p = T.DefinitionParams.t_of_yojson (params_json r.params) in
+  with_doc r.id p.textDocument.uri (fun text ->
+      let blocks = Httui_lang.Fence_scanner.scan text in
+      let offset = offset_of_position text p.position in
+      match Httui_lang.Analyze.symbol_at blocks ~offset with
+      | Some { decl_range = Some (s, e); _ } ->
+          let loc =
+            location_of_range text p.textDocument.uri ~start:s ~stop:e
+          in
+          respond r.id (T.Locations.yojson_of_t (`Location [ loc ]))
+      | _ -> respond r.id `Null)
+
+let on_references (r : Jsonrpc.Request.t) =
+  let p = T.ReferenceParams.t_of_yojson (params_json r.params) in
+  with_doc r.id p.textDocument.uri (fun text ->
+      let blocks = Httui_lang.Fence_scanner.scan text in
+      let offset = offset_of_position text p.position in
+      match Httui_lang.Analyze.symbol_at blocks ~offset with
+      | None -> respond r.id `Null
+      | Some sym ->
+          let ranges =
+            (if p.context.includeDeclaration then Option.to_list sym.decl_range
+             else [])
+            @ sym.ref_ranges
+          in
+          let locs =
+            List.map
+              (fun (s, e) ->
+                location_of_range text p.textDocument.uri ~start:s ~stop:e)
+              ranges
+          in
+          respond r.id (`List (List.map T.Location.yojson_of_t locs)))
+
+let on_rename (r : Jsonrpc.Request.t) =
+  let p = T.RenameParams.t_of_yojson (params_json r.params) in
+  with_doc r.id p.textDocument.uri (fun text ->
+      let blocks = Httui_lang.Fence_scanner.scan text in
+      let offset = offset_of_position text p.position in
+      match Httui_lang.Analyze.symbol_at blocks ~offset with
+      (* positional [$prev] has no name to rewrite *)
+      | Some { decl_range = Some (ds, de); ref_ranges; alias }
+        when alias <> Httui_lang.Analyze.prev_name ->
+          let edits =
+            List.map
+              (fun (s, e) ->
+                T.TextEdit.create ~newText:p.newName
+                  ~range:(range_of_offsets text ~start:s ~stop:e))
+              ((ds, de) :: ref_ranges)
+          in
+          let edit =
+            T.WorkspaceEdit.create ~changes:[ (p.textDocument.uri, edits) ] ()
+          in
+          respond r.id (T.WorkspaceEdit.yojson_of_t edit)
+      | _ -> respond r.id `Null)
+
 let shutdown_received = ref false
 
 let handle_request (r : Jsonrpc.Request.t) =
@@ -398,6 +460,9 @@ let handle_request (r : Jsonrpc.Request.t) =
   | "textDocument/completion" -> on_completion r
   | "textDocument/semanticTokens/full" -> on_semantic_tokens r
   | "textDocument/semanticTokens/full/delta" -> on_semantic_tokens_delta r
+  | "textDocument/definition" -> on_definition r
+  | "textDocument/references" -> on_references r
+  | "textDocument/rename" -> on_rename r
   | "shutdown" ->
       shutdown_received := true;
       respond r.id `Null
