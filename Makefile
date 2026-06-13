@@ -52,7 +52,9 @@ test-grammars: ## Run grammar corpus tests
 	cd $(TS_REFS_DIR) && npx tree-sitter test
 	cd $(TS_HTTP_DIR) && npx tree-sitter test
 
-bench: build-ocaml ## Run the LSP transport benchmark
+bench: build-ocaml ## Run perf benchmarks (analysis in-process + LSP transport)
+	python3 bench/gen_fixtures.py
+	dune exec bench/bench_analysis.exe -- bench/fixtures
 	python3 bench/lsp_roundtrip.py
 
 lint: lint-ocaml lint-js ## Run all linters

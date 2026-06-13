@@ -56,13 +56,38 @@ class LspClient:
         if params is not None:
             payload["params"] = params
         self.send(payload)
-        return self.recv()
+        # Skip any server-initiated notifications (e.g. publishDiagnostics
+        # emitted after a didOpen/didChange) queued ahead of our response.
+        while True:
+            msg = self.recv()
+            if msg.get("id") == rid:
+                return msg
 
     def notify(self, method, params=None):
         payload = {"jsonrpc": "2.0", "method": method}
         if params is not None:
             payload["params"] = params
         self.send(payload)
+
+    def recv_until_method(self, method):
+        """Drain messages until a notification with `method` arrives,
+        returning it. Used to time edit -> server notification cycles."""
+        while True:
+            msg = self.recv()
+            if msg.get("method") == method:
+                return msg
+
+
+# p95 by operation name, filled by report(); used by the CI budget gate.
+RESULTS = {}
+
+# ADR-010 "Hard fail" thresholds (the generous column, not the tight p95
+# targets) — shared CI runners are too noisy to gate on the p95 budgets,
+# but a hard-fail breach is a real regression on any machine.
+HARD_FAIL_MS = {
+    "didChange->diagnostics": 300.0,
+    "semanticTokens/full": 200.0,
+}
 
 
 def percentile(sorted_values, p):
@@ -71,8 +96,9 @@ def percentile(sorted_values, p):
 
 def report(name, samples_ms):
     samples_ms.sort()
+    RESULTS[name] = percentile(samples_ms, 0.95)
     print(
-        f"{name:32s} n={len(samples_ms):>5}  "
+        f"{name:40s} n={len(samples_ms):>5}  "
         f"p50={percentile(samples_ms, 0.50):.4f}ms  "
         f"p95={percentile(samples_ms, 0.95):.4f}ms  "
         f"p99={percentile(samples_ms, 0.99):.4f}ms  "
@@ -80,8 +106,25 @@ def report(name, samples_ms):
     )
 
 
+def check_budgets():
+    """Exit non-zero if any operation breached its ADR-010 hard-fail
+    budget. Matches by name prefix so fixture suffixes are ignored."""
+    breaches = []
+    for name, p95 in RESULTS.items():
+        for prefix, limit in HARD_FAIL_MS.items():
+            if name.startswith(prefix) and p95 > limit:
+                breaches.append(f"  {name}: p95 {p95:.1f}ms > hard-fail {limit:.0f}ms")
+    if breaches:
+        print("\nBUDGET BREACH (ADR-010 hard-fail):")
+        print("\n".join(breaches))
+        sys.exit(1)
+    print("\nbudgets OK (within ADR-010 hard-fail thresholds)")
+
+
 def main():
-    server = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_SERVER
+    args = [a for a in sys.argv[1:] if a != "--check"]
+    check = "--check" in sys.argv
+    server = args[0] if args else DEFAULT_SERVER
     if not Path(server).exists():
         sys.exit(f"server binary not found: {server} (run `dune build` first)")
 
@@ -123,28 +166,58 @@ def main():
         samples.append((time.perf_counter() - t) * 1e3)
     report("request round-trip (dispatch)", samples)
 
-    # didChange ingestion: full-sync document replace per notification,
-    # measured via a probe request behind each batch (notifications have
-    # no response of their own).
-    version = 2
-    samples = []
-    for _ in range(1000):
-        t = time.perf_counter()
+    # Fixture-based E2E: the canonical ADR-010 fixtures over the real
+    # transport. This captures what the in-process bench (bench_analysis.ml)
+    # cannot: stdio framing + JSON encode/decode of a large payload on top
+    # of the server's analysis. The gap between the two benches IS the
+    # transport cost.
+    fixtures = Path(__file__).parent / "fixtures"
+    for fixture in ("medium.md", "large.md"):
+        path = fixtures / fixture
+        if not path.exists():
+            print(f"  (skip {fixture}: run bench/gen_fixtures.py first)")
+            continue
+        text = path.read_text()
+        uri = f"file:///tmp/{fixture}"
         client.notify(
-            "textDocument/didChange",
-            {
-                "textDocument": {"uri": "file:///tmp/bench.md", "version": version},
-                "contentChanges": [{"text": doc}],
-            },
+            "textDocument/didOpen",
+            {"textDocument": {"uri": uri, "languageId": "markdown",
+                              "version": 1, "text": text}},
         )
-        probe()
-        samples.append((time.perf_counter() - t) * 1e3)
-        version += 1
-    report("didChange(2KB doc) + probe", samples)
+        client.recv_until_method("textDocument/publishDiagnostics")
+
+        # Edit-to-diagnostics: full-sync re-send, then read until the
+        # server republishes diagnostics — exactly ADR-010's "diagnostic
+        # publish after edit" budget (<100ms p95).
+        version = 2
+        samples = []
+        for _ in range(300):
+            t = time.perf_counter()
+            client.notify(
+                "textDocument/didChange",
+                {"textDocument": {"uri": uri, "version": version},
+                 "contentChanges": [{"text": text}]},
+            )
+            client.recv_until_method("textDocument/publishDiagnostics")
+            samples.append((time.perf_counter() - t) * 1e3)
+            version += 1
+        report(f"didChange->diagnostics [{fixture} {len(text)//1024}KB]", samples)
+
+        # semanticTokens/full request latency on the fixture.
+        samples = []
+        for _ in range(300):
+            t = time.perf_counter()
+            client.request("textDocument/semanticTokens/full",
+                           {"textDocument": {"uri": uri}})
+            samples.append((time.perf_counter() - t) * 1e3)
+        report(f"semanticTokens/full [{fixture}]", samples)
 
     client.request("shutdown")
     client.notify("exit")
     client.proc.wait(timeout=5)
+
+    if check:
+        check_budgets()
 
 
 if __name__ == "__main__":
