@@ -601,8 +601,102 @@ let () =
     | Some (`String v) -> contains v "last value: `42`"
     | _ -> false);
 
-  send_to c3 (req 9 "shutdown");
+  (* --- semantic tokens: full + delta --- *)
+  (* drain notifications (e.g. publishDiagnostics) until the response for
+     [rid] arrives *)
+  let rec recv_result client rid =
+    let m = recv_from client in
+    if member "id" m = Some (`Int rid) then m else recv_result client rid
+  in
+  let result_id_of m = Option.bind (member "result" m) (member "resultId") in
+  send_to c3
+    (req 6 "textDocument/semanticTokens/full"
+       ~params:(`Assoc [ ("textDocument", vault_doc) ]));
+  let full = recv_result c3 6 in
+  let full_data =
+    match Option.bind (member "result" full) (member "data") with
+    | Some (`List l) -> l
+    | _ -> []
+  in
+  check "semanticTokens/full returns a resultId and data"
+    (result_id_of full <> None && List.length full_data > 0);
+  let rid_full =
+    match result_id_of full with Some (`String s) -> s | _ -> ""
+  in
+
+  (* delta with no document change since the full → empty edit list *)
+  send_to c3
+    (req 7 "textDocument/semanticTokens/full/delta"
+       ~params:
+         (`Assoc
+            [
+              ("textDocument", vault_doc); ("previousResultId", `String rid_full);
+            ]));
+  let delta_same = recv_result c3 7 in
+  check "delta with no change returns empty edits"
+    (match Option.bind (member "result" delta_same) (member "edits") with
+    | Some (`List []) -> true
+    | _ -> false);
+  let rid_same =
+    match result_id_of delta_same with Some (`String s) -> s | _ -> ""
+  in
+
+  (* edit the doc, then delta against the last resultId → a real edit list
+     (the delta path, not the full fallback) *)
+  (* the new Authorization header adds header-name/value + env-ref tokens,
+     so the token stream genuinely differs (a URL-only edit would not —
+     the URL is not a semantic token) *)
+  let edited =
+    "# nota\n\n\
+     ```http alias=req1\n\
+     GET https://api.example.com/users\n\
+     Authorization: Bearer {{TOKEN}}\n\
+     ```\n\n\
+     ```http alias=req2\n\
+     GET https://x.dev/{{req1.response.body.id}}\n\
+     ```\n"
+  in
+  send_to c3
+    (notif "textDocument/didChange"
+       ~params:
+         (`Assoc
+            [
+              ( "textDocument",
+                `Assoc [ ("uri", `String vault_uri); ("version", `Int 3) ] );
+              ("contentChanges", `List [ `Assoc [ ("text", `String edited) ] ]);
+            ]));
   let _ = recv_from c3 in
+  send_to c3
+    (req 8 "textDocument/semanticTokens/full/delta"
+       ~params:
+         (`Assoc
+            [
+              ("textDocument", vault_doc); ("previousResultId", `String rid_same);
+            ]));
+  let delta_edit = recv_result c3 8 in
+  check "delta after an edit returns a non-empty edit list"
+    (match Option.bind (member "result" delta_edit) (member "edits") with
+    | Some (`List (_ :: _)) -> true
+    | _ -> false);
+
+  (* --- cancellation: a cancel observed before the request is honored --- *)
+  send_to c3 (notif "$/cancelRequest" ~params:(`Assoc [ ("id", `Int 77) ]));
+  send_to c3
+    (req 77 "textDocument/semanticTokens/full"
+       ~params:(`Assoc [ ("textDocument", vault_doc) ]));
+  let cancelled = recv_result c3 77 in
+  check "cancelled request answers with an error, no result"
+    (member "result" cancelled = None && member "error" cancelled <> None);
+  (* a normal request afterwards is unaffected (no cancel bleed) *)
+  send_to c3
+    (req 78 "textDocument/semanticTokens/full"
+       ~params:(`Assoc [ ("textDocument", vault_doc) ]));
+  let after_cancel = recv_result c3 78 in
+  check "request after a cancel still succeeds"
+    (member "result" after_cancel <> None);
+
+  send_to c3 (req 9 "shutdown");
+  let _ = recv_result c3 9 in
   send_to c3 (notif "exit");
   (* best effort: on Windows the server may still hold the file *)
   (try Sys.remove db_path with Sys_error _ -> ());

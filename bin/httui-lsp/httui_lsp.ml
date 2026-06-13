@@ -208,7 +208,8 @@ let on_initialize (r : Jsonrpc.Request.t) =
               ~legend:
                 (T.SemanticTokensLegend.create ~tokenTypes:!legend_types
                    ~tokenModifiers:!legend_modifiers)
-              ~full:(`Bool true) ()))
+              ~full:(`Full (T.SemanticTokensOptions.create_full ~delta:true ()))
+              ()))
       ()
   in
   let serverInfo =
@@ -281,31 +282,112 @@ let on_completion (r : Jsonrpc.Request.t) =
       in
       respond r.id (`List (List.map T.CompletionItem.yojson_of_t items)))
 
+(* Encode tokens to the LSP delta-position int stream. Tokens arrive
+   sorted by start offset, so a single forward cursor over the document
+   converts every offset to (line, char) in O(doc) total — the previous
+   per-token [Doc_position.of_offset] was O(offset) each, i.e. O(n^2)
+   over the whole document and the dominant cost on large files. *)
+let encode_tokens text tokens =
+  let n = String.length text in
+  let cur = ref 0 and line = ref 0 and line_start = ref 0 in
+  let advance_to off =
+    while !cur < off && !cur < n do
+      if text.[!cur] = '\n' then begin
+        incr line;
+        line_start := !cur + 1
+      end;
+      incr cur
+    done
+  in
+  let prev_line = ref 0 and prev_char = ref 0 in
+  let data =
+    List.concat_map
+      (fun (t : Httui_lang.Semantic_tokens.t) ->
+        advance_to t.t_start;
+        let char =
+          Httui_lang.Doc_position.utf16_units text ~from:!line_start
+            ~until:t.t_start
+        in
+        let length =
+          Httui_lang.Doc_position.utf16_units text ~from:t.t_start
+            ~until:t.t_stop
+        in
+        let dl = !line - !prev_line in
+        let dc = if dl = 0 then char - !prev_char else char in
+        prev_line := !line;
+        prev_char := char;
+        [ dl; dc; length; type_index t.kind; modifier_bits t ])
+      tokens
+  in
+  Array.of_list data
+
+let compute_token_data text =
+  encode_tokens text
+    (Httui_lang.Semantic_tokens.of_blocks (Httui_lang.Fence_scanner.scan text))
+
+(* Last full result per document, for delta requests: uri -> (resultId,
+   data). Monotonic ids keep delta bookkeeping trivial. *)
+let token_results : (string, string * int array) Hashtbl.t = Hashtbl.create 16
+let result_id_counter = ref 0
+
+let next_result_id () =
+  incr result_id_counter;
+  string_of_int !result_id_counter
+
+let store_tokens uri data =
+  let id = next_result_id () in
+  Hashtbl.replace token_results (T.DocumentUri.to_string uri) (id, data);
+  id
+
+(* Minimal prefix/suffix diff of two int streams into a single LSP edit
+   (the encoding rust-analyzer uses). Empty list when identical. *)
+let diff_tokens old_ new_ =
+  let lo = Array.length old_ and ln = Array.length new_ in
+  let p = ref 0 in
+  while !p < lo && !p < ln && old_.(!p) = new_.(!p) do
+    incr p
+  done;
+  let s = ref 0 in
+  while
+    !s < lo - !p && !s < ln - !p && old_.(lo - 1 - !s) = new_.(ln - 1 - !s)
+  do
+    incr s
+  done;
+  let delete_count = lo - !p - !s in
+  let new_len = ln - !p - !s in
+  if delete_count = 0 && new_len = 0 then []
+  else
+    let data = if new_len = 0 then None else Some (Array.sub new_ !p new_len) in
+    [ T.SemanticTokensEdit.create ~deleteCount:delete_count ?data ~start:!p () ]
+
 let on_semantic_tokens (r : Jsonrpc.Request.t) =
   let p = T.SemanticTokensParams.t_of_yojson (params_json r.params) in
   with_doc r.id p.textDocument.uri (fun text ->
-      let blocks = Httui_lang.Fence_scanner.scan text in
-      let tokens = Httui_lang.Semantic_tokens.of_blocks blocks in
-      let data =
-        let prev_line = ref 0 and prev_char = ref 0 in
-        List.concat_map
-          (fun (t : Httui_lang.Semantic_tokens.t) ->
-            let pos = Httui_lang.Doc_position.of_offset text t.t_start in
-            let length =
-              Httui_lang.Doc_position.utf16_units text ~from:t.t_start
-                ~until:t.t_stop
-            in
-            let dl = pos.line - !prev_line in
-            let dc =
-              if dl = 0 then pos.character - !prev_char else pos.character
-            in
-            prev_line := pos.line;
-            prev_char := pos.character;
-            [ dl; dc; length; type_index t.kind; modifier_bits t ])
-          tokens
-      in
-      let result = T.SemanticTokens.create ~data:(Array.of_list data) () in
-      respond r.id (T.SemanticTokens.yojson_of_t result))
+      let data = compute_token_data text in
+      let result_id = store_tokens p.textDocument.uri data in
+      respond r.id
+        (T.SemanticTokens.yojson_of_t
+           (T.SemanticTokens.create ~data ~resultId:result_id ())))
+
+let on_semantic_tokens_delta (r : Jsonrpc.Request.t) =
+  let p = T.SemanticTokensDeltaParams.t_of_yojson (params_json r.params) in
+  with_doc r.id p.textDocument.uri (fun text ->
+      let data = compute_token_data text in
+      let uri_s = T.DocumentUri.to_string p.textDocument.uri in
+      match Hashtbl.find_opt token_results uri_s with
+      | Some (prev_id, old_data) when prev_id = p.previousResultId ->
+          let edits = diff_tokens old_data data in
+          let result_id = store_tokens p.textDocument.uri data in
+          respond r.id
+            (T.SemanticTokensDelta.yojson_of_t
+               (T.SemanticTokensDelta.create ~edits ~resultId:result_id ()))
+      | _ ->
+          (* unknown/stale previousResultId — the spec allows replying
+             with a full result instead of a delta *)
+          let result_id = store_tokens p.textDocument.uri data in
+          respond r.id
+            (T.SemanticTokens.yojson_of_t
+               (T.SemanticTokens.create ~data ~resultId:result_id ())))
 
 let shutdown_received = ref false
 
@@ -315,6 +397,7 @@ let handle_request (r : Jsonrpc.Request.t) =
   | "textDocument/hover" -> on_hover r
   | "textDocument/completion" -> on_completion r
   | "textDocument/semanticTokens/full" -> on_semantic_tokens r
+  | "textDocument/semanticTokens/full/delta" -> on_semantic_tokens_delta r
   | "shutdown" ->
       shutdown_received := true;
       respond r.id `Null
@@ -344,7 +427,71 @@ let handle_notification (n : Jsonrpc.Notification.t) =
       Hashtbl.iter (fun _ (uri, text) -> publish_diagnostics uri text) docs
   | _ -> ()
 
-(* --- main loop ---------------------------------------------------------- *)
+(* --- cancellation + main loop ------------------------------------------- *)
+
+(* A dedicated reader thread parses incoming messages and enqueues them;
+   [$/cancelRequest] ids are recorded as they arrive so the main loop can
+   skip a stale request before doing its work. Processing stays
+   single-threaded (only the main loop touches docs/stores/stdout), so
+   the only shared state is the queue and the cancelled-id set. *)
+let queue : Jsonrpc.Packet.t Queue.t = Queue.create ()
+let queue_mutex = Mutex.create ()
+let queue_cond = Condition.create ()
+let eof = ref false
+let cancelled : (Jsonrpc.Id.t, unit) Hashtbl.t = Hashtbl.create 16
+
+let record_cancel id =
+  Mutex.lock queue_mutex;
+  (* cancels for already-completed requests would otherwise leak; the set
+     is advisory, so dropping it wholesale past a cap is safe *)
+  if Hashtbl.length cancelled > 256 then Hashtbl.clear cancelled;
+  Hashtbl.replace cancelled id ();
+  Mutex.unlock queue_mutex
+
+let take_cancelled id =
+  Mutex.lock queue_mutex;
+  let c = Hashtbl.mem cancelled id in
+  if c then Hashtbl.remove cancelled id;
+  Mutex.unlock queue_mutex;
+  c
+
+let reader_thread () =
+  (try
+     while true do
+       let body = read_message () in
+       match
+         try Some (Jsonrpc.Packet.t_of_yojson (Yojson.Safe.from_string body))
+         with _ -> None
+       with
+       | Some (Jsonrpc.Packet.Notification n) when n.method_ = "$/cancelRequest"
+         -> (
+           match
+             try Some (T.CancelParams.t_of_yojson (params_json n.params))
+             with _ -> None
+           with
+           | Some cp -> record_cancel cp.id
+           | None -> ())
+       | Some pkt ->
+           Mutex.lock queue_mutex;
+           Queue.push pkt queue;
+           Condition.signal queue_cond;
+           Mutex.unlock queue_mutex
+       | None -> ()
+     done
+   with End_of_file -> ());
+  Mutex.lock queue_mutex;
+  eof := true;
+  Condition.signal queue_cond;
+  Mutex.unlock queue_mutex
+
+let next_packet () =
+  Mutex.lock queue_mutex;
+  while Queue.is_empty queue && not !eof do
+    Condition.wait queue_cond queue_mutex
+  done;
+  let r = if Queue.is_empty queue then None else Some (Queue.pop queue) in
+  Mutex.unlock queue_mutex;
+  r
 
 let () =
   (* --db <path>: app database for environment variable NAMES (read-only
@@ -359,19 +506,22 @@ let () =
    parse (Array.to_list Sys.argv));
   set_binary_mode_in stdin true;
   set_binary_mode_out stdout true;
-  try
-    while true do
-      let body = read_message () in
-      (* one malformed message must not kill the session — skip it and
-         keep serving (EOF still ends the loop) *)
-      try
-        let json = Yojson.Safe.from_string body in
-        match Jsonrpc.Packet.t_of_yojson json with
-        | Jsonrpc.Packet.Request r -> handle_request r
-        | Jsonrpc.Packet.Notification n -> handle_notification n
-        | _ -> ()
-      with
-      | End_of_file -> raise End_of_file
-      | _ -> ()
-    done
-  with End_of_file -> ()
+  let _ : Thread.t = Thread.create reader_thread () in
+  let rec loop () =
+    match next_packet () with
+    | None -> () (* stdin closed and queue drained *)
+    | Some pkt ->
+        (* one malformed handler must not kill the session *)
+        (try
+           match pkt with
+           | Jsonrpc.Packet.Request r ->
+               if take_cancelled r.id then
+                 respond_error r.id Jsonrpc.Response.Error.Code.RequestCancelled
+                   "request cancelled"
+               else handle_request r
+           | Jsonrpc.Packet.Notification n -> handle_notification n
+           | _ -> ()
+         with _ -> ());
+        loop ()
+  in
+  loop ()
