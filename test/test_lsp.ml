@@ -260,6 +260,148 @@ let () =
   check "semantic tokens data non-empty, stride 5"
     (List.length data > 0 && List.length data mod 5 = 0);
 
+  (* --- alias navigation: definition / references / rename ---
+     req1 declared on line 2; line 7 has two refs, the second of which
+     ([{{req1.req1}}]) carries a path segment named like the alias —
+     rename must not touch it. *)
+  let nav_doc =
+    "# nav\n\n\
+     ```http alias=req1\n\
+     GET https://api.example.com/users\n\
+     ```\n\n\
+     ```http alias=req2\n\
+     GET https://x.dev/{{req1.body.id}}?a={{req1.req1}}\n\
+     ```\n"
+  in
+  send
+    (notif "textDocument/didChange"
+       ~params:
+         (`Assoc
+            [
+              ( "textDocument",
+                `Assoc [ ("uri", `String "file:///t.md"); ("version", `Int 3) ]
+              );
+              ("contentChanges", `List [ `Assoc [ ("text", `String nav_doc) ] ]);
+            ]));
+  let _ = recv () in
+  (* cursor inside the first [{{req1...}}] name token on line 7 (char 20
+     is the start of [req1]) *)
+  let ref_pos = `Assoc [ ("line", `Int 7); ("character", `Int 21) ] in
+  let start_of loc = Option.bind (member "range" loc) (member "start") in
+  (* definition jumps to the alias value on the declaration line (line 2,
+     char 14 — start of [req1] in [alias=req1]) *)
+  send
+    (req 10 "textDocument/definition"
+       ~params:(`Assoc [ ("textDocument", text_doc); ("position", ref_pos) ]));
+  let def = recv () in
+  check "definition returns the declaration location"
+    (match member "result" def with
+    | Some (`List [ loc ]) ->
+        let s = start_of loc in
+        Option.bind s (member "line") = Some (`Int 2)
+        && Option.bind s (member "character") = Some (`Int 14)
+    | _ -> false);
+
+  (* references with includeDeclaration counts decl + both ref names = 3 *)
+  send
+    (req 11 "textDocument/references"
+       ~params:
+         (`Assoc
+            [
+              ("textDocument", text_doc);
+              ("position", ref_pos);
+              ("context", `Assoc [ ("includeDeclaration", `Bool true) ]);
+            ]));
+  let refs_incl = recv () in
+  check "references incl declaration = 3"
+    (match member "result" refs_incl with
+    | Some (`List l) -> List.length l = 3
+    | _ -> false);
+  send
+    (req 12 "textDocument/references"
+       ~params:
+         (`Assoc
+            [
+              ("textDocument", text_doc);
+              ("position", ref_pos);
+              ("context", `Assoc [ ("includeDeclaration", `Bool false) ]);
+            ]));
+  check "references excl declaration = 2"
+    (match member "result" (recv ()) with
+    | Some (`List l) -> List.length l = 2
+    | _ -> false);
+
+  (* rename edits the decl + both ref names, NOT the path segment that is
+     spelled like the alias *)
+  send
+    (req 13 "textDocument/rename"
+       ~params:
+         (`Assoc
+            [
+              ("textDocument", text_doc);
+              ("position", ref_pos);
+              ("newName", `String "fetchUser");
+            ]));
+  let ren = recv () in
+  let edits =
+    match
+      Option.bind
+        (Option.bind (member "result" ren) (member "changes"))
+        (member "file:///t.md")
+    with
+    | Some (`List l) -> l
+    | _ -> []
+  in
+  check "rename produces 3 edits (decl + 2 ref names, not the path segment)"
+    (List.length edits = 3);
+  check "every rename edit writes the new name"
+    (List.for_all
+       (fun e -> member "newText" e = Some (`String "fetchUser"))
+       edits);
+
+  (* positional [$prev]: definition resolves to the previous block, but
+     rename is a no-op (it has no name token to rewrite) *)
+  let prev_doc =
+    "# p\n\n\
+     ```http alias=req1\n\
+     GET https://api.example.com/users\n\
+     ```\n\n\
+     ```http alias=req2\n\
+     GET https://x.dev/{{$prev.body.id}}\n\
+     ```\n"
+  in
+  send
+    (notif "textDocument/didChange"
+       ~params:
+         (`Assoc
+            [
+              ( "textDocument",
+                `Assoc [ ("uri", `String "file:///t.md"); ("version", `Int 4) ]
+              );
+              ("contentChanges", `List [ `Assoc [ ("text", `String prev_doc) ] ]);
+            ]));
+  let _ = recv () in
+  let prev_pos = `Assoc [ ("line", `Int 7); ("character", `Int 21) ] in
+  send
+    (req 14 "textDocument/definition"
+       ~params:(`Assoc [ ("textDocument", text_doc); ("position", prev_pos) ]));
+  check "definition on $prev resolves to the previous block"
+    (match member "result" (recv ()) with
+    | Some (`List [ loc ]) ->
+        Option.bind (start_of loc) (member "line") = Some (`Int 2)
+    | _ -> false);
+  send
+    (req 15 "textDocument/rename"
+       ~params:
+         (`Assoc
+            [
+              ("textDocument", text_doc);
+              ("position", prev_pos);
+              ("newName", `String "whatever");
+            ]));
+  check "rename on $prev is a no-op (null result)"
+    (member "result" (recv ()) = Some `Null);
+
   (* shutdown / exit *)
   send (req 9 "shutdown");
   let _ = recv () in
