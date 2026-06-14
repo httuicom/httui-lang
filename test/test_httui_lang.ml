@@ -161,6 +161,20 @@ let () =
      plus refs in req2: ghost (1 name + 1 segment) + req1 (1 name + 2
      segments) + TOKEN (1 name) *)
   check "token count" (List.length toks = 14);
+  (* the `secret` modifier marks env-var refs whose key is is_secret *)
+  check "secret env var ref carries the secret modifier"
+    (List.exists
+       (fun (t : Httui_lang.Semantic_tokens.t) ->
+         t.kind = Httui_lang.Semantic_tokens.Env_var && t.secret)
+       (Httui_lang.Semantic_tokens.of_blocks
+          ~env_keys:[ ("TOKEN", true) ]
+          blocks));
+  check "env var ref is not secret without the is_secret flag"
+    (List.for_all
+       (fun (t : Httui_lang.Semantic_tokens.t) -> not t.secret)
+       (Httui_lang.Semantic_tokens.of_blocks
+          ~env_keys:[ ("TOKEN", false) ]
+          blocks));
   (match toks with
   | first :: _ ->
       check "first token is the fence lang"

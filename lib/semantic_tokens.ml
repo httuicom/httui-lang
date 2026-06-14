@@ -20,6 +20,7 @@ type t = {
   kind : kind;
   unresolved : bool;  (** ref with path whose alias is not in scope *)
   declaration : bool;  (** [alias=...] declaration site in the info string *)
+  secret : bool;  (** env var whose value is keychain-backed (is_secret) *)
 }
 
 let plain ~start_ ~stop_ kind =
@@ -29,6 +30,7 @@ let plain ~start_ ~stop_ kind =
     kind;
     unresolved = false;
     declaration = false;
+    secret = false;
   }
 
 (* Fence tokens for the info string. LSP tokens must not overlap, so the
@@ -83,7 +85,7 @@ let http_tokens (b : Block.t) ~ref_spans =
       subtract_holes ~s:tok.start_ ~e:tok.stop_ ref_spans
       |> List.map (fun (s, e) -> plain ~start_:s ~stop_:e kind))
 
-let of_blocks blocks =
+let of_blocks ?(env_keys = []) blocks =
   List.concat
     (List.mapi
        (fun i (b : Block.t) ->
@@ -100,6 +102,7 @@ let of_blocks blocks =
                      kind = Alias;
                      unresolved = false;
                      declaration = true;
+                     secret = false;
                    };
                  ]
              | _ -> []
@@ -128,6 +131,9 @@ let of_blocks blocks =
                    kind = name_kind;
                    unresolved = (is_prev || r.has_path) && not known;
                    declaration = false;
+                   secret =
+                     name_kind = Env_var
+                     && List.assoc_opt r.name env_keys = Some true;
                  }
                  :: List.map
                       (fun (s, e) ->
@@ -137,6 +143,7 @@ let of_blocks blocks =
                           kind = Ref_path;
                           unresolved = false;
                           declaration = false;
+                          secret = false;
                         })
                       r.path_segments)
            in

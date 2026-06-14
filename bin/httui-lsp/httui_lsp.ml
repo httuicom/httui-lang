@@ -139,7 +139,7 @@ let compute_legend ~announced_types ~announced_modifiers =
   legend_modifiers :=
     List.filter
       (fun m -> List.mem m announced_modifiers)
-      [ "declaration"; "unresolved" ]
+      [ "declaration"; "unresolved"; "secret" ]
 
 let type_index (kind : Httui_lang.Semantic_tokens.kind) =
   let name =
@@ -176,6 +176,7 @@ let modifier_bits (t : Httui_lang.Semantic_tokens.t) =
       let active =
         (m = "declaration" && t.declaration)
         || (m = "unresolved" && t.unresolved)
+        || (m = "secret" && t.secret)
       in
       if active then bits lor (1 lsl i) else bits)
     0
@@ -322,9 +323,10 @@ let encode_tokens text tokens =
   in
   Array.of_list data
 
-let compute_token_data text =
+let compute_token_data ~env_keys text =
   encode_tokens text
-    (Httui_lang.Semantic_tokens.of_blocks (Httui_lang.Fence_scanner.scan text))
+    (Httui_lang.Semantic_tokens.of_blocks ~env_keys
+       (Httui_lang.Fence_scanner.scan text))
 
 (* Last full result per document, for delta requests: uri -> (resultId,
    data). Monotonic ids keep delta bookkeeping trivial. *)
@@ -364,7 +366,10 @@ let diff_tokens old_ new_ =
 let on_semantic_tokens (r : Jsonrpc.Request.t) =
   let p = T.SemanticTokensParams.t_of_yojson (params_json r.params) in
   with_doc r.id p.textDocument.uri (fun text ->
-      let data = compute_token_data text in
+      let env_keys =
+        Env_store.keys_for ~file_path:(T.DocumentUri.to_path p.textDocument.uri)
+      in
+      let data = compute_token_data ~env_keys text in
       let result_id = store_tokens p.textDocument.uri data in
       respond r.id
         (T.SemanticTokens.yojson_of_t
@@ -373,7 +378,10 @@ let on_semantic_tokens (r : Jsonrpc.Request.t) =
 let on_semantic_tokens_delta (r : Jsonrpc.Request.t) =
   let p = T.SemanticTokensDeltaParams.t_of_yojson (params_json r.params) in
   with_doc r.id p.textDocument.uri (fun text ->
-      let data = compute_token_data text in
+      let env_keys =
+        Env_store.keys_for ~file_path:(T.DocumentUri.to_path p.textDocument.uri)
+      in
+      let data = compute_token_data ~env_keys text in
       let uri_s = T.DocumentUri.to_string p.textDocument.uri in
       match Hashtbl.find_opt token_results uri_s with
       | Some (prev_id, old_data) when prev_id = p.previousResultId ->
