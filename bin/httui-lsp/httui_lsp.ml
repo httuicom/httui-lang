@@ -133,6 +133,11 @@ let compute_legend ~announced_types ~announced_modifiers =
       pick "httui.http_header_value" "string";
       pick "httui.fence_lang" "keyword";
       pick "httui.fence_info" "parameter";
+      pick "httui.sql_keyword" "keyword";
+      pick "httui.sql_identifier" "variable";
+      pick "httui.sql_string" "string";
+      pick "httui.sql_number" "number";
+      pick "httui.sql_comment" "comment";
     ]
   in
   legend_types := List.sort_uniq compare names;
@@ -163,6 +168,17 @@ let type_index (kind : Httui_lang.Semantic_tokens.kind) =
         if mem "httui.fence_lang" then "httui.fence_lang" else "keyword"
     | Httui_lang.Semantic_tokens.Fence_info ->
         if mem "httui.fence_info" then "httui.fence_info" else "parameter"
+    | Httui_lang.Semantic_tokens.Sql_keyword ->
+        if mem "httui.sql_keyword" then "httui.sql_keyword" else "keyword"
+    | Httui_lang.Semantic_tokens.Sql_identifier ->
+        if mem "httui.sql_identifier" then "httui.sql_identifier"
+        else "variable"
+    | Httui_lang.Semantic_tokens.Sql_string ->
+        if mem "httui.sql_string" then "httui.sql_string" else "string"
+    | Httui_lang.Semantic_tokens.Sql_number ->
+        if mem "httui.sql_number" then "httui.sql_number" else "number"
+    | Httui_lang.Semantic_tokens.Sql_comment ->
+        if mem "httui.sql_comment" then "httui.sql_comment" else "comment"
   in
   let rec idx i = function
     | [] -> 0

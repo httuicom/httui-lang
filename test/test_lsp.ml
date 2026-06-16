@@ -153,7 +153,9 @@ let () =
     = Some
         (`List
            [
+             `String "comment";
              `String "keyword";
+             `String "number";
              `String "parameter";
              `String "property";
              `String "string";
@@ -487,16 +489,17 @@ let () =
     | Some (`List l) -> List.map (function `Int i -> i | _ -> -1) l
     | _ -> []
   in
-  (* legend (sorted): httui.alias=0, httui.env_var=1, httui.ref_path=2,
-     keyword=3, parameter=4, property=5, string=6. Opening fence of req1
-     on line 2: lang [http] at char 3 (keyword), info [alias=] at char 8
-     (parameter), declaration [req1] at char 14 (httui.alias, declaration
-     bit), then [GET] on line 3 (keyword). *)
+  (* legend (sorted, after SQL kinds joined the fallbacks): comment=0,
+     httui.alias=1, httui.env_var=2, httui.ref_path=3, keyword=4, number=5,
+     parameter=6, property=7, string=8, variable=9. Opening fence of req1 on
+     line 2: lang [http] at char 3 (keyword=4), info [alias=] at char 8
+     (parameter=6), declaration [req1] at char 14 (httui.alias=1, declaration
+     bit), then [GET] on line 3 (keyword=4). *)
   check "tokens start with fence lang, info, alias decl, method"
     (match data2 with
-    | 2 :: 3 :: 4 :: 3 :: 0 (* ```http -> lang *) :: 0 :: 5 :: 6 :: 4
-      :: 0 (* alias= -> fence info *) :: 0 :: 6 :: 4 :: 0
-      :: 1 (* req1 -> alias declaration *) :: 1 :: 0 :: 3 :: 3
+    | 2 :: 3 :: 4 :: 4 :: 0 (* ```http -> lang *) :: 0 :: 5 :: 6 :: 6
+      :: 0 (* alias= -> fence info *) :: 0 :: 6 :: 4 :: 1
+      :: 1 (* req1 -> alias declaration *) :: 1 :: 0 :: 3 :: 4
       :: 0 (* GET -> method *) :: _ ->
         true
     | _ -> false);
