@@ -657,4 +657,33 @@ let () =
     | Some n -> Filename.check_suffix n "-a_b.log"
     | None -> false);
 
+  (* --- SQL grammar (tree-sitter-sql embed) --- *)
+  let sql_kinds q = Httui_lang.Sql.kinds q in
+  let has_kind q k = List.mem k (sql_kinds q) in
+  let select = "SELECT id, name FROM users WHERE id = 5" in
+  check "sql parses a SELECT into structured nodes"
+    (has_kind select "select" && has_kind select "from"
+   && has_kind select "where");
+  check "sql exposes table refs as object_reference"
+    (has_kind select "object_reference");
+  check "sql exposes column refs as field" (List.mem "field" (sql_kinds select));
+  check "sql exposes comparisons as binary_expression (type-check anchor)"
+    (has_kind select "binary_expression");
+  check "sql keeps keyword nodes for highlight"
+    (has_kind select "keyword_select" && has_kind select "keyword_from");
+  check "sql parses an INSERT with a values list"
+    (let q = "INSERT INTO users (id, email) VALUES (1, 'a@b.c')" in
+     has_kind q "insert" && has_kind q "object_reference");
+  check "sql parses a multi-dialect quoted identifier (mysql backtick)"
+    (has_kind "SELECT `id` FROM `t`" "object_reference");
+  check "sql still yields nodes for a half-typed query (error recovery)"
+    (let nodes = Httui_lang.Sql.walk "SELECT id FROM" in
+     List.exists
+       (fun (n : Httui_lang.Sql.node) -> n.kind = "keyword_select")
+       nodes);
+  check "sql walk offsets are shiftable by base"
+    (match Httui_lang.Sql.walk ~base:100 "SELECT 1" with
+    | n :: _ -> n.start_ >= 100
+    | [] -> false);
+
   if !failures > 0 then exit 1
