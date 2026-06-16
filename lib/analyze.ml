@@ -139,45 +139,148 @@ let field_diagnostic ~resolve (r : Refs.occurrence) segs =
           severity = Warning;
         }
 
-let diagnostics ?(shapes = []) blocks =
+(* --- cross-language ref-vs-column type check (db-* blocks) --------------- *)
+
+let comparison_ops = [ "="; "<>"; "!="; "<="; ">="; "<"; ">" ]
+
+(* Text strictly between byte offsets [a] and [b] (doc-absolute), trimmed. *)
+let between text a b =
+  if b <= a || a < 0 || b > String.length text then ""
+  else String.trim (String.sub text a (b - a))
+
+(* The data type of [col] across [tables]: the unique type when the column
+   name appears with a single category, else [None] (ambiguous columns are
+   skipped — leniency). *)
+let column_category tables col =
+  let col = String.lowercase_ascii col in
+  let cats =
+    List.concat_map
+      (fun (t : Sql.table) ->
+        List.filter_map
+          (fun (c : Sql.column) ->
+            if String.lowercase_ascii c.name = col then
+              Option.map Sql_types.of_column c.data_type
+            else None)
+          t.columns)
+      tables
+    |> List.sort_uniq compare
+  in
+  match cats with [ c ] -> Some c | _ -> None
+
+(* For db-* block [b], pair each ref compared to a column (`col OP {{ref}}`
+   or `{{ref}} OP col`) and warn when their type categories are
+   incompatible. [resolve_type] turns a ref occurrence into its inferred
+   category (via the shape cache); [tables] is the connection's schema. *)
+let sql_ref_diagnostics ~tables ~resolve_type doc (b : Block.t) =
+  let fields =
+    Sql.walk ~base:b.content_offset b.content
+    |> List.filter_map (fun (n : Sql.node) ->
+        if n.kind = "field" then
+          Some (String.sub doc n.start_ (n.stop_ - n.start_), n.start_, n.stop_)
+        else None)
+  in
+  Refs.of_block b
+  |> List.filter_map (fun (r : Refs.occurrence) ->
+      (* a column whose comparison operator sits in the gap to the ref,
+         on either side *)
+      let paired =
+        List.find_map
+          (fun (name, fs, fe) ->
+            if
+              fe <= r.ref_start
+              && List.mem (between doc fe r.ref_start) comparison_ops
+            then Some name
+            else if
+              r.ref_stop <= fs
+              && List.mem (between doc r.ref_stop fs) comparison_ops
+            then Some name
+            else None)
+          fields
+      in
+      match paired with
+      | None -> None
+      | Some col -> (
+          match (column_category tables col, resolve_type r) with
+          | Some cat, Some ref_cat when not (Sql_types.compatible cat ref_cat)
+            ->
+              Some
+                {
+                  start_ = r.name_start;
+                  stop_ = r.ref_stop;
+                  message =
+                    Printf.sprintf
+                      "Type mismatch: column '%s' is %s but {{%s}} is %s" col
+                      (Sql_types.to_string cat) r.name
+                      (Sql_types.to_string ref_cat);
+                  severity = Warning;
+                }
+          | _ -> None))
+
+let diagnostics ?(shapes = []) ?(sql_tables_for = fun _ -> []) ?(doc = "")
+    blocks =
   List.concat
     (List.mapi
        (fun i (b : Block.t) ->
          if not (Block.is_executable b) then []
          else
            let scope = aliases_above blocks ~index:i in
-           Refs.of_block b
-           |> List.filter_map (fun (r : Refs.occurrence) ->
-               let typo_check () =
-                 Option.bind
-                   (typed_ctx ~shapes ~values:[] ~blocks ~index:i ~scope r.name)
-                   (fun ctx ->
-                     field_diagnostic ~resolve:ctx.resolve r (segments_of b r))
-               in
-               if r.name = prev_name then
-                 if prev_decl blocks ~index:i = None then
+           let ref_diags =
+             Refs.of_block b
+             |> List.filter_map (fun (r : Refs.occurrence) ->
+                 let typo_check () =
+                   Option.bind
+                     (typed_ctx ~shapes ~values:[] ~blocks ~index:i ~scope
+                        r.name) (fun ctx ->
+                       field_diagnostic ~resolve:ctx.resolve r (segments_of b r))
+                 in
+                 if r.name = prev_name then
+                   if prev_decl blocks ~index:i = None then
+                     Some
+                       {
+                         start_ = r.name_start;
+                         stop_ = r.name_stop;
+                         message =
+                           "No previous block to reference with {{$prev}}";
+                         severity = Error;
+                       }
+                   else typo_check ()
+                 else if not r.has_path then None
+                 else if not (List.mem_assoc r.name scope) then
                    Some
                      {
                        start_ = r.name_start;
                        stop_ = r.name_stop;
-                       message = "No previous block to reference with {{$prev}}";
+                       message =
+                         Printf.sprintf
+                           "Unknown block alias '%s' — no block above declares \
+                            alias=%s"
+                           r.name r.name;
                        severity = Error;
                      }
-                 else typo_check ()
-               else if not r.has_path then None
-               else if not (List.mem_assoc r.name scope) then
-                 Some
-                   {
-                     start_ = r.name_start;
-                     stop_ = r.name_stop;
-                     message =
-                       Printf.sprintf
-                         "Unknown block alias '%s' — no block above declares \
-                          alias=%s"
-                         r.name r.name;
-                     severity = Error;
-                   }
-               else typo_check ()))
+                 else typo_check ())
+           in
+           let sql_diags =
+             if not (is_db_lang b.lang) then []
+             else
+               let connection_id =
+                 if String.length b.lang > 3 then
+                   String.sub b.lang 3 (String.length b.lang - 3)
+                 else ""
+               in
+               let resolve_type (r : Refs.occurrence) =
+                 Option.bind
+                   (typed_ctx ~shapes ~values:[] ~blocks ~index:i ~scope r.name)
+                   (fun ctx ->
+                     match ctx.resolve (List.map fst (segments_of b r)) with
+                     | Found shape ->
+                         Some (Sql_types.of_shape_type (Shape.type_name shape))
+                     | _ -> None)
+               in
+               sql_ref_diagnostics
+                 ~tables:(sql_tables_for connection_id)
+                 ~resolve_type doc b
+           in
+           ref_diags @ sql_diags)
        blocks)
 
 let block_index_at blocks ~offset =

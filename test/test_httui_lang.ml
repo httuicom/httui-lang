@@ -769,4 +769,45 @@ let () =
        (fun (c : Httui_lang.Sql.completion) -> c.is_table)
        (complete "SELECT * FROM "));
 
+  (* --- cross-language ref-vs-column type check --- *)
+  let tc_shape =
+    Httui_lang.Shape.(Object_ [ ("body", Object_ [ ("id", Scalar "number") ]) ])
+  in
+  let tc_tables col_type =
+    [
+      Httui_lang.Sql.
+        {
+          schema = None;
+          name = "t";
+          columns = [ { name = "email"; data_type = Some col_type } ];
+        };
+    ]
+  in
+  let tc_diags col_type =
+    let doc =
+      "```http alias=req1\n\
+       GET /u\n\
+       ```\n\n\
+       ```db-pg\n\
+       SELECT * FROM t WHERE email = {{req1.response.body.id}}\n\
+       ```\n"
+    in
+    Httui_lang.Analyze.diagnostics
+      ~shapes:[ ("req1", tc_shape) ]
+      ~sql_tables_for:(fun _ -> tc_tables col_type)
+      ~doc
+      (Httui_lang.Fence_scanner.scan doc)
+  in
+  check "type mismatch (text column vs number ref) is flagged"
+    (List.exists
+       (fun (d : Httui_lang.Analyze.diagnostic) ->
+         has_sub d.message "Type mismatch" && has_sub d.message "email")
+       (tc_diags "text"));
+  check "compatible types (numeric column vs number ref) are not flagged"
+    (not
+       (List.exists
+          (fun (d : Httui_lang.Analyze.diagnostic) ->
+            has_sub d.message "Type mismatch")
+          (tc_diags "integer")));
+
   if !failures > 0 then exit 1
