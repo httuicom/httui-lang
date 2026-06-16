@@ -686,4 +686,39 @@ let () =
     | n :: _ -> n.start_ >= 100
     | [] -> false);
 
+  (* --- SQL semantic tokens (db-* blocks) --- *)
+  let db_doc = "```db-postgres\nSELECT id FROM users WHERE id = 5\n```\n" in
+  let db_toks =
+    Httui_lang.Semantic_tokens.of_blocks (Httui_lang.Fence_scanner.scan db_doc)
+  in
+  let has_sql_kind toks k =
+    List.exists (fun (t : Httui_lang.Semantic_tokens.t) -> t.kind = k) toks
+  in
+  check "db block emits sql keyword tokens"
+    (has_sql_kind db_toks Httui_lang.Semantic_tokens.Sql_keyword);
+  check "db block emits sql identifier tokens"
+    (has_sql_kind db_toks Httui_lang.Semantic_tokens.Sql_identifier);
+  check "db block emits sql number literal token"
+    (has_sql_kind db_toks Httui_lang.Semantic_tokens.Sql_number);
+  check "sql keyword token lands on SELECT (doc-absolute offset)"
+    (List.exists
+       (fun (t : Httui_lang.Semantic_tokens.t) ->
+         t.kind = Httui_lang.Semantic_tokens.Sql_keyword
+         && String.sub db_doc t.t_start (t.t_stop - t.t_start) = "SELECT")
+       db_toks);
+  check "db block emits sql string literal token"
+    (has_sql_kind
+       (Httui_lang.Semantic_tokens.of_blocks
+          (Httui_lang.Fence_scanner.scan
+             "```db-postgres\nSELECT * FROM t WHERE s = 'x'\n```\n"))
+       Httui_lang.Semantic_tokens.Sql_string);
+  check "db block emits sql comment token"
+    (has_sql_kind
+       (Httui_lang.Semantic_tokens.of_blocks
+          (Httui_lang.Fence_scanner.scan
+             "```db-postgres\n-- note\nSELECT 1\n```\n"))
+       Httui_lang.Semantic_tokens.Sql_comment);
+  check "http block emits no sql tokens"
+    (not (has_sql_kind toks Httui_lang.Semantic_tokens.Sql_keyword));
+
   if !failures > 0 then exit 1

@@ -13,6 +13,11 @@ type kind =
   | Http_header_value
   | Fence_lang
   | Fence_info
+  | Sql_keyword
+  | Sql_identifier
+  | Sql_string
+  | Sql_number
+  | Sql_comment
 
 type t = {
   t_start : int;  (** doc-absolute byte range *)
@@ -85,6 +90,51 @@ let http_tokens (b : Block.t) ~ref_spans =
       subtract_holes ~s:tok.start_ ~e:tok.stop_ ref_spans
       |> List.map (fun (s, e) -> plain ~start_:s ~stop_:e kind))
 
+(* Highlight tokens for a ```db-* block by walking the SQL CST. Only leaf
+   nodes carry color: keywords, identifiers (table/column), string and
+   number literals, and comments. Structural nodes (statement, select,
+   binary_expression, …) are skipped, so tokens never overlap. Ref spans are
+   carved out the same way HTTP does it. *)
+let sql_token_kind (b : Block.t) (n : Sql.node) =
+  let starts_with pre s =
+    String.length s >= String.length pre
+    && String.sub s 0 (String.length pre) = pre
+  in
+  if starts_with "keyword_" n.kind then Some Sql_keyword
+  else
+    match n.kind with
+    | "comment" | "marginalia" -> Some Sql_comment
+    | "identifier" -> Some Sql_identifier
+    | "literal" ->
+        let c =
+          if n.stop_ > n.start_ then b.Block.content.[n.start_] else ' '
+        in
+        if c = '\'' || c = '"' || c = '`' then Some Sql_string
+        else if (c >= '0' && c <= '9') || c = '.' || c = '-' then
+          Some Sql_number
+        else None (* TRUE/NULL/etc. are coloured via their keyword_* child *)
+    | _ -> None
+
+let sql_tokens (b : Block.t) ~ref_spans =
+  Sql.walk b.content
+  |> List.filter_map (fun (n : Sql.node) ->
+      match sql_token_kind b n with
+      | None -> None
+      | Some kind ->
+          Some (b.content_offset + n.start_, b.content_offset + n.stop_, kind))
+  |> List.concat_map (fun (s, e, kind) ->
+      subtract_holes ~s ~e ref_spans
+      |> List.map (fun (s, e) -> plain ~start_:s ~stop_:e kind))
+
+let body_tokens (b : Block.t) ~ref_spans =
+  let starts_with pre s =
+    String.length s >= String.length pre
+    && String.sub s 0 (String.length pre) = pre
+  in
+  if b.Block.lang = "http" then http_tokens b ~ref_spans
+  else if starts_with "db-" b.lang then sql_tokens b ~ref_spans
+  else []
+
 let of_blocks ?(env_keys = []) blocks =
   List.concat
     (List.mapi
@@ -147,6 +197,6 @@ let of_blocks ?(env_keys = []) blocks =
                         })
                       r.path_segments)
            in
-           declaration @ fence_tokens b @ http_tokens b ~ref_spans @ refs)
+           declaration @ fence_tokens b @ body_tokens b ~ref_spans @ refs)
        blocks)
   |> List.sort (fun a b -> compare a.t_start b.t_start)
