@@ -84,7 +84,10 @@ let values_for_uri uri =
 let publish_diagnostics uri text =
   let blocks = Httui_lang.Fence_scanner.scan text in
   let diagnostics =
-    Httui_lang.Analyze.diagnostics ~shapes:(shapes_for_uri uri) blocks
+    Httui_lang.Analyze.diagnostics ~shapes:(shapes_for_uri uri)
+      ~sql_tables_for:(fun connection_id ->
+        Sql_schema_store.tables_for ~connection_id)
+      ~doc:text blocks
     |> List.map (fun (d : Httui_lang.Analyze.diagnostic) ->
         T.Diagnostic.create
           ~range:(range_of_offsets text ~start:d.start_ ~stop:d.stop_)
