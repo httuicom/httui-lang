@@ -1,0 +1,11 @@
+Vendored from @derekstride/tree-sitter-sql (multi-dialect SQL grammar).
+
+source:   https://github.com/DerekStride/tree-sitter-sql
+npm:      @derekstride/tree-sitter-sql
+version:  0.3.11
+gitHead:  7b51ecda191d36b92f5a90a8d1bc3faef1c7b8b8
+
+Generated `parser.c` + `scanner.c` are vendored (the upstream does not commit
+the generated parser). To bump: download the pinned npm tarball, replace
+src/{parser.c,scanner.c,tree_sitter/,grammar.json,node-types.json}, audit the
+scanner under ASan/UBSan, and re-run the cross-grammar sync test (ADR-014).

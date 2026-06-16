@@ -9,14 +9,31 @@
 (rule
  (copy grammars/tree-sitter-httui-http/src/parser.c http_parser.c))
 
+(rule
+ (copy grammars/tree-sitter-sql/src/parser.c sql_parser.c))
+
+(rule
+ (copy grammars/tree-sitter-sql/src/scanner.c sql_scanner.c))
+
 (library
  (name httui_lang)
  (public_name httui_lang)
  (libraries tree-sitter unix)
  (foreign_stubs
   (language c)
-  (names refs_stub refs_parser http_stub http_parser)
+  (names
+   refs_stub
+   refs_parser
+   http_stub
+   http_parser
+   sql_stub
+   sql_parser
+   sql_scanner)
+  ; SQL's tree_sitter/ headers are the newest ABI; list them first so every
+  ; vendored parser.c compiles against a superset header (the httui grammars
+  ; use an older, subset ABI).
   (include_dirs
+   grammars/tree-sitter-sql/src
    grammars/tree-sitter-httui-refs/src
    grammars/tree-sitter-httui-http/src)))
 
