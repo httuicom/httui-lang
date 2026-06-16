@@ -567,6 +567,7 @@ let next_packet () =
   r
 
 let () =
+  Printexc.record_backtrace true;
   (* --db <path>: app database for environment variable NAMES (read-only
      enrichment; the server runs fine without it) *)
   (let rec parse = function
@@ -597,4 +598,13 @@ let () =
          with _ -> ());
         loop ()
   in
-  loop ()
+  (* Persist a crash file before dying so the desktop Crashes panel can
+     surface a server panic — the sidecar's stderr is discarded. *)
+  try loop ()
+  with e ->
+    let body =
+      Printf.sprintf "%s\n\n%s" (Printexc.to_string e)
+        (Printexc.get_backtrace ())
+    in
+    ignore (Httui_lang.Crash_log.write ~source:"lsp" ~body);
+    raise e

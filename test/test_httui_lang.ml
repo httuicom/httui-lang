@@ -629,4 +629,32 @@ let () =
   check "offset/position roundtrip"
     (Httui_lang.Doc_position.to_offset mdoc p = 5);
 
+  (* --- crash log --- *)
+  let crash_dir =
+    Filename.concat (Filename.get_temp_dir_name ()) "httui_crash_test"
+  in
+  (try Sys.rmdir crash_dir with _ -> ());
+  let name =
+    Httui_lang.Crash_log.write_to ~dir:crash_dir ~source:"lsp" ~body:"boom\nbt"
+  in
+  check "crash write returns a name"
+    (match name with
+    | Some n -> Filename.check_suffix n "-lsp.log"
+    | None -> false);
+  check "crash file holds the body"
+    (match name with
+    | Some n ->
+        let ic = open_in_bin (Filename.concat crash_dir n) in
+        let len = in_channel_length ic in
+        let s = really_input_string ic len in
+        close_in ic;
+        s = "boom\nbt"
+    | None -> false);
+  check "crash source is sanitized of separators"
+    (match
+       Httui_lang.Crash_log.write_to ~dir:crash_dir ~source:"a/b" ~body:"x"
+     with
+    | Some n -> Filename.check_suffix n "-a_b.log"
+    | None -> false);
+
   if !failures > 0 then exit 1

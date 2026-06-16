@@ -12,7 +12,7 @@
 (library
  (name httui_lang)
  (public_name httui_lang)
- (libraries tree-sitter)
+ (libraries tree-sitter unix)
  (foreign_stubs
   (language c)
   (names refs_stub refs_parser http_stub http_parser)
