@@ -269,12 +269,34 @@ let on_hover (r : Jsonrpc.Request.t) =
           in
           respond r.id (T.Hover.yojson_of_t hover))
 
+(* Schema-aware completion inside a ```db-* block (when the cursor is not in a
+   `{{ref}}`). The connection id is the fence suffix; the column schema comes
+   from the app's introspection cache. *)
+let sql_completion_items blocks ~offset =
+  let starts_with pre s =
+    String.length s >= String.length pre
+    && String.sub s 0 (String.length pre) = pre
+  in
+  match Httui_lang.Analyze.block_index_at blocks ~offset with
+  | Some (_, b) when starts_with "db-" b.Httui_lang.Block.lang ->
+      let connection_id = String.sub b.lang 3 (String.length b.lang - 3) in
+      let tables = Sql_schema_store.tables_for ~connection_id in
+      Httui_lang.Sql.complete ~tables ~text:b.content
+        ~offset:(offset - b.content_offset)
+      |> List.map (fun (c : Httui_lang.Sql.completion) ->
+          T.CompletionItem.create ~label:c.label
+            ~kind:
+              (if c.is_table then T.CompletionItemKind.Class
+               else T.CompletionItemKind.Field)
+            ?detail:c.detail ())
+  | _ -> []
+
 let on_completion (r : Jsonrpc.Request.t) =
   let p = T.CompletionParams.t_of_yojson (params_json r.params) in
   with_doc r.id p.textDocument.uri (fun text ->
       let blocks = Httui_lang.Fence_scanner.scan text in
       let offset = offset_of_position text p.position in
-      let items =
+      let ref_items =
         Httui_lang.Analyze.completion_at
           ~env_keys:
             (Env_store.keys_for
@@ -297,6 +319,11 @@ let on_completion (r : Jsonrpc.Request.t) =
                 else
                   T.CompletionItem.create ~label:it.label
                     ~kind:T.CompletionItemKind.Variable ~detail:"block alias" ())
+      in
+      (* Outside a `{{ref}}`, a db-* block offers schema-aware SQL completion. *)
+      let items =
+        if ref_items <> [] then ref_items
+        else sql_completion_items blocks ~offset
       in
       respond r.id (`List (List.map T.CompletionItem.yojson_of_t items)))
 

@@ -721,4 +721,52 @@ let () =
   check "http block emits no sql tokens"
     (not (has_sql_kind toks Httui_lang.Semantic_tokens.Sql_keyword));
 
+  (* --- schema-aware SQL completion --- *)
+  let sql_tables =
+    Httui_lang.Sql.
+      [
+        {
+          schema = None;
+          name = "users";
+          columns =
+            [
+              { name = "id"; data_type = Some "integer" };
+              { name = "email"; data_type = Some "text" };
+            ];
+        };
+        {
+          schema = None;
+          name = "orders";
+          columns = [ { name = "total"; data_type = Some "numeric" } ];
+        };
+      ]
+  in
+  let complete text =
+    Httui_lang.Sql.complete ~tables:sql_tables ~text
+      ~offset:(String.length text)
+  in
+  let labels cs =
+    List.map (fun (c : Httui_lang.Sql.completion) -> c.label) cs
+    |> List.sort compare
+  in
+  check "completion after FROM offers table names"
+    (labels (complete "SELECT * FROM ") = [ "orders"; "users" ]);
+  check "completion after FROM filters by prefix"
+    (labels (complete "SELECT * FROM us") = [ "users" ]);
+  check "completion after WHERE offers columns"
+    (let cs = labels (complete "SELECT * FROM users WHERE ") in
+     List.mem "email" cs && List.mem "id" cs && List.mem "total" cs);
+  check "completion after table-dot offers that table's columns"
+    (labels (complete "SELECT users.") = [ "email"; "id" ]);
+  check "column completion detail carries the type"
+    (List.exists
+       (fun (c : Httui_lang.Sql.completion) ->
+         c.label = "email"
+         && match c.detail with Some d -> has_sub d "text" | None -> false)
+       (complete "SELECT * FROM users WHERE "));
+  check "table completion is flagged is_table"
+    (List.for_all
+       (fun (c : Httui_lang.Sql.completion) -> c.is_table)
+       (complete "SELECT * FROM "));
+
   if !failures > 0 then exit 1
