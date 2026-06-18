@@ -39,7 +39,7 @@ jobs:
             ocaml-compiler: "ocaml-base-compiler.5.4.1,conf-pkg-config,conf-mingw-w64-gcc-i686,conf-gmp,conf-gmp-powm-sec,conf-sqlite3,conf-mingw-w64-gmp-i686,conf-mingw-w64-gmp-x86_64,conf-mingw-w64-sqlite3-x86_64"
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       # Same cache rotation as ci.yml: the monthly stamp bounds
       # opam-repository metadata drift, the opam-file hash refreshes the
@@ -140,7 +140,7 @@ jobs:
       run:
         working-directory: grammars-lezer/${{ matrix.package }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: actions/setup-node@v4
         with:
           node-version: "22"

@@ -28,7 +28,7 @@ jobs:
           - os: windows-latest
             ocaml-compiler: "ocaml-base-compiler.5.4.1,conf-pkg-config,conf-mingw-w64-gcc-i686,conf-gmp,conf-gmp-powm-sec,conf-sqlite3,conf-mingw-w64-gmp-i686,conf-mingw-w64-gmp-x86_64,conf-mingw-w64-sqlite3-x86_64"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       # The monthly stamp bounds opam-repository metadata drift (the
       # setup-ocaml snapshot is immutable once saved); the opam-file hash
       # refreshes the cache when the dependency set changes.
@@ -77,7 +77,7 @@ jobs:
       run:
         working-directory: grammars-lezer/${{ matrix.package }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
@@ -101,7 +101,7 @@ jobs:
       run:
         working-directory: lib/grammars/${{ matrix.grammar }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
@@ -122,7 +122,7 @@ jobs:
     name: Cross-grammar sync
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
@@ -145,7 +145,7 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
       - name: Validate commits on PR branch
